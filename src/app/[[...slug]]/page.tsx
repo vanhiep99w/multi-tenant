@@ -17,7 +17,7 @@ export default async function Page({
   params: Promise<{ slug?: string[] }>;
 }) {
   const { slug } = await params;
-  if (!slug) redirect('/multi-tenancy/01-overview/');
+  if (!slug) redirect('/01-overview/');
   const page = source.getPage(slug);
   if (!page) notFound();
 
