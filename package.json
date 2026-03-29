@@ -8,8 +8,8 @@
     "dev": "next dev",
     "prebuild": "node scripts/prepare-content.mjs",
     "build": "next build",
-    "preview": "wrangler dev",
-    "deploy": "npm run build && wrangler deploy"
+    "preview": "wrangler pages dev dist",
+    "deploy": "npm run build && wrangler pages deploy dist"
   },
   "dependencies": {
     "fumadocs-core": "^14.5.6",
