@@ -411,6 +411,7 @@ public class TenantTraceSampler implements Sampler {
             : SamplingResult.create(SamplingDecision.DROP);
     }
 }
+```
 
 ## Per-Tenant Dashboards & Alerting
 
@@ -806,8 +807,6 @@ Cost Attribution:
 ├── ✅ AWS Cost Allocation Tags enabled
 └── ✅ Action items for unprofitable tenants
 ```
-
----
 
 ---
 
