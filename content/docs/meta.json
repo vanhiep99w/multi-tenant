@@ -1,3 +1,20 @@
 {
-  "title": "Multi-Tenant Architecture"
+  "title": "Multi-Tenant Architecture",
+  "pages": [
+    "01-overview",
+    "02-isolation-models",
+    "03-data-partitioning",
+    "04-tenant-identity",
+    "05-authentication",
+    "06-compute-isolation",
+    "07-noisy-neighbor",
+    "08-tenant-lifecycle",
+    "09-security-compliance",
+    "10-observability",
+    "11-scaling-performance",
+    "12-cicd-deployment",
+    "13-cloud-deployment",
+    "14-best-practices",
+    "15-case-study"
+  ]
 }
