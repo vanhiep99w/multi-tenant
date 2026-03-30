@@ -501,6 +501,7 @@ public class OrderController {
         orderService.delete(id);
     }
 }
+```
 
 ## Cross-Tenant Access Control
 

@@ -139,67 +139,16 @@ Request đến
 > [!NOTE]
 > Filter chỉ active **trong Session đó**. Nếu tạo Session mới (worker thread, async job) mà không gọi `enableFilter()` lại → filter không có hiệu lực. Đây là lý do phải kết hợp thêm RLS ở DB layer.
 
-### Ví dụ: Prisma (Node.js/TypeScript)
-
-Prisma không có built-in global filter, nhưng dùng **Prisma Middleware** hoặc **Client Extensions** (Prisma 4.16+, khuyến nghị Prisma 5+):
-
-```typescript
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient().$extends({
-  name: 'tenantFilter',
-  query: {
-    $allModels: {
-      async $allOperations({ args, query, model }) {
-        const tenantId = getTenantContext();
-
-        if (!tenantId) {
-          throw new Error('Missing tenant context');
-        }
-
-        // Inject where clause
-        args.where = {
-          ...args.where,
-          tenantId,
-        };
-
-        return query(args);
-      },
-    },
-  },
-});
-```
-
-### Ví dụ: Django (Python)
-
-```python
-# managers.py
-class TenantManager(models.Manager):
-    def get_queryset(self):
-        tenant_id = get_current_tenant_id()
-        if tenant_id is None:
-            return super().get_queryset()
-        return super().get_queryset().filter(tenant_id=tenant_id)
-
-# models.py
-class Order(models.Model):
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
-    status = models.CharField(max_length=20)
-
-    objects = TenantManager()  # Mọi query tự động filter
-```
-
 ### Ưu và Nhược điểm
 
-| | Chi tiết |
-|---|---------|
-| ✅ **Transparent** | Developer không cần nhớ thêm `WHERE tenant_id = ?` |
-| ✅ **Dễ implement** | Ít code, setup 1 lần cho toàn bộ app |
-| ✅ **Flexible** | Có thể disable filter khi cần (admin, cross-tenant ops) |
-| ❌ **Bypass được** | Native SQL, raw query không đi qua ORM → không filter |
+|                          | Chi tiết                                                 |
+| ------------------------ | -------------------------------------------------------- |
+| ✅ **Transparent**       | Developer không cần nhớ thêm `WHERE tenant_id = ?`       |
+| ✅ **Dễ implement**      | Ít code, setup 1 lần cho toàn bộ app                     |
+| ✅ **Flexible**          | Có thể disable filter khi cần (admin, cross-tenant ops)  |
+| ❌ **Bypass được**       | Native SQL, raw query không đi qua ORM → không filter    |
 | ❌ **Application-level** | Nếu kết nối DB trực tiếp (analytics tool) → không bảo vệ |
-| ❌ **ORM-specific** | Mỗi ORM khác nhau, migration tốn effort |
+| ❌ **ORM-specific**      | Mỗi ORM khác nhau, migration tốn effort                  |
 
 > [!CAUTION]
 > **Lỗ hổng phổ biến**: Developer viết raw SQL query hoặc dùng ORM `createQuery()` bypass filter. Luôn audit query trong codebase.
@@ -210,7 +159,7 @@ class Order(models.Model):
 
 ### Nguyên lý
 
-RLS là tính năng nằm **bên trong database engine** — trước khi trả kết quả cho bất kỳ query nào, DB tự hỏi: *"Session này đang là tenant nào? Row này có thuộc tenant đó không?"* Nếu không thuộc → DB giữ lại row đó, không trả ra ngoài.
+RLS là tính năng nằm **bên trong database engine** — trước khi trả kết quả cho bất kỳ query nào, DB tự hỏi: _"Session này đang là tenant nào? Row này có thuộc tenant đó không?"_ Nếu không thuộc → DB giữ lại row đó, không trả ra ngoài.
 
 Khác với ORM Filter (filter ở application), RLS không quan tâm query đến từ đâu — dù từ app, từ psql terminal, hay từ Metabase — đều bị apply như nhau.
 
@@ -311,7 +260,10 @@ SELECT * FROM orders WHERE status = 'pending';
 **Bước 4: Trong application code (Node.js)**
 
 ```typescript
-async function withTenantContext(tenantId: string, callback: () => Promise<void>) {
+async function withTenantContext(
+  tenantId: string,
+  callback: () => Promise<void>,
+) {
   const client = await pool.connect();
   try {
     await client.query(`SET app.current_tenant_id = $1`, [tenantId]);
@@ -323,8 +275,8 @@ async function withTenantContext(tenantId: string, callback: () => Promise<void>
 }
 
 // Usage
-await withTenantContext('acme-corp-uuid', async () => {
-  const result = await client.query('SELECT * FROM orders');
+await withTenantContext("acme-corp-uuid", async () => {
+  const result = await client.query("SELECT * FROM orders");
   // Chỉ trả về rows của acme-corp
 });
 ```
@@ -351,13 +303,13 @@ COMMIT;
 
 PostgreSQL không phải DB duy nhất hỗ trợ RLS — SQL Server và Oracle cũng có native RLS, chỉ khác tên gọi và cú pháp:
 
-| Database | RLS Support | Cách triển khai |
-|----------|:-----------:|-----------------|
-| **PostgreSQL** | 🟢 Native | `CREATE POLICY` + `current_setting()` |
-| **MySQL** | 🟡 Limited | Dùng View + Trigger thay thế |
-| **SQL Server** | 🟢 Native | `CREATE SECURITY POLICY` + predicate function |
-| **Oracle** | 🟢 Native | Virtual Private Database (VPD) |
-| **MongoDB** | 🔴 Không | Không có native RLS, phải dùng app-level |
+| Database       | RLS Support | Cách triển khai                               |
+| -------------- | :---------: | --------------------------------------------- |
+| **PostgreSQL** |  🟢 Native  | `CREATE POLICY` + `current_setting()`         |
+| **MySQL**      | 🟡 Limited  | Dùng View + Trigger thay thế                  |
+| **SQL Server** |  🟢 Native  | `CREATE SECURITY POLICY` + predicate function |
+| **Oracle**     |  🟢 Native  | Virtual Private Database (VPD)                |
+| **MongoDB**    |  🔴 Không   | Không có native RLS, phải dùng app-level      |
 
 **SQL Server — Security Policy:**
 
@@ -423,16 +375,16 @@ MySQL không có RLS thực sự. Cách phổ biến nhất là tạo view per t
 
 ### Ưu và Nhược điểm
 
-| | Chi tiết |
-|---|---------|
-| ✅ **Database-level** | Bảo vệ kể cả direct DB access |
-| ✅ **Không bypass được** (qua app) | Raw SQL, admin tool vẫn bị filter |
-| ✅ **Centralized policy** | Định nghĩa 1 lần, apply cho tất cả connection |
-| ✅ **Auditable** | DB audit log thấy policy applied |
-| ❌ **Performance overhead** | Mỗi query thêm policy check (~5-10%) |
-| ❌ **Connection pool phức tạp** | Phải quản lý tenant context per session |
-| ❌ **Debug khó hơn** | Query không thấy `WHERE` clause nhưng bị filter |
-| ❌ **Không phải DB nào cũng hỗ trợ** | MongoDB, một số NoSQL không có RLS |
+|                                      | Chi tiết                                        |
+| ------------------------------------ | ----------------------------------------------- |
+| ✅ **Database-level**                | Bảo vệ kể cả direct DB access                   |
+| ✅ **Không bypass được** (qua app)   | Raw SQL, admin tool vẫn bị filter               |
+| ✅ **Centralized policy**            | Định nghĩa 1 lần, apply cho tất cả connection   |
+| ✅ **Auditable**                     | DB audit log thấy policy applied                |
+| ❌ **Performance overhead**          | Mỗi query thêm policy check (~5-10%)            |
+| ❌ **Connection pool phức tạp**      | Phải quản lý tenant context per session         |
+| ❌ **Debug khó hơn**                 | Query không thấy `WHERE` clause nhưng bị filter |
+| ❌ **Không phải DB nào cũng hỗ trợ** | MongoDB, một số NoSQL không có RLS              |
 
 > [!IMPORTANT]
 > RLS là **layer bảo vệ mạnh nhất** cho Pool model. Luôn kết hợp với ORM filter (defense in depth).
@@ -486,16 +438,19 @@ CREATE OR REPLACE VIEW tenant_beta_orders AS
 ```typescript
 async function provisionTenantViews(tenantId: string) {
   // safeId loại bỏ ký tự đặc biệt → an toàn dùng trong identifier (tên view)
-  const safeId = tenantId.replace(/[^a-zA-Z0-9_]/g, '_');
+  const safeId = tenantId.replace(/[^a-zA-Z0-9_]/g, "_");
 
   // table lấy từ whitelist hardcode → không có SQL injection risk
-  const views = ['orders', 'products', 'customers'];
+  const views = ["orders", "products", "customers"];
   for (const table of views) {
-    await pool.query(`
+    await pool.query(
+      `
       CREATE OR REPLACE VIEW tenant_${safeId}_${table} AS
       SELECT * FROM ${table}
       WHERE tenant_id = $1
-    `, [tenantId]);
+    `,
+      [tenantId],
+    );
   }
 }
 ```
@@ -511,14 +466,14 @@ REVOKE ALL ON orders FROM role_acme_readonly;
 
 ### Ưu và Nhược điểm
 
-| | Chi tiết |
-|---|---------|
-| ✅ **Đơn giản** | Dễ hiểu, dễ audit |
-| ✅ **DB-level protection** | Tách quyền trên view, không truy cập raw table |
-| ✅ **Flexible schema** | View có thể expose subset columns per tenant |
-| ❌ **Scale issues** | 1000+ tenants = 1000+ views → quản lý khó |
-| ❌ **Migration overhead** | Alter table → recreate tất cả views |
-| ❌ **Write phức tạp** | Insert/Update qua view cần `WITH CHECK OPTION` |
+|                                                | Chi tiết                                        |
+| ---------------------------------------------- | ----------------------------------------------- |
+| ✅ **Đơn giản**                                | Dễ hiểu, dễ audit                               |
+| ✅ **DB-level protection**                     | Tách quyền trên view, không truy cập raw table  |
+| ✅ **Flexible schema**                         | View có thể expose subset columns per tenant    |
+| ❌ **Scale issues**                            | 1000+ tenants = 1000+ views → quản lý khó       |
+| ❌ **Migration overhead**                      | Alter table → recreate tất cả views             |
+| ❌ **Write phức tạp**                          | Insert/Update qua view cần `WITH CHECK OPTION`  |
 | ❌ **Không praktical cho số lượng tenant lớn** | Phù hợp hơn cho Silo/Bridge model với ít tenant |
 
 ---
@@ -547,17 +502,18 @@ graph TD
 ### Ví dụ: Express.js (Node.js)
 
 ```typescript
-import { AsyncLocalStorage } from 'async_hooks';
+import { AsyncLocalStorage } from "async_hooks";
 
 const tenantContext = new AsyncLocalStorage<string>();
 
 export function tenantMiddleware(req, res, next) {
-  const tenantId = req.headers['x-tenant-id']
-    ?? req.user?.tenantId
-    ?? extractFromSubdomain(req);
+  const tenantId =
+    req.headers["x-tenant-id"] ??
+    req.user?.tenantId ??
+    extractFromSubdomain(req);
 
   if (!tenantId) {
-    return res.status(400).json({ error: 'Tenant ID required' });
+    return res.status(400).json({ error: "Tenant ID required" });
   }
 
   tenantContext.run(tenantId, () => next());
@@ -565,7 +521,7 @@ export function tenantMiddleware(req, res, next) {
 
 export function getTenantId(): string {
   const id = tenantContext.getStore();
-  if (!id) throw new Error('No tenant context');
+  if (!id) throw new Error("No tenant context");
   return id;
 }
 ```
@@ -611,10 +567,10 @@ public class TenantFilter implements Filter {
 const tenantId = jwtDecode(token).tenant_id;
 
 // 2. From custom header
-const tenantId = req.headers['x-tenant-id'];
+const tenantId = req.headers["x-tenant-id"];
 
 // 3. From subdomain (acme.myapp.com → acme)
-const tenantId = req.hostname.split('.')[0];
+const tenantId = req.hostname.split(".")[0];
 
 // 4. From path parameter (/api/tenants/:tenantId/orders)
 const tenantId = req.params.tenantId;
@@ -634,14 +590,14 @@ const tenantId = await getTenantByUserId(req.user.id);
 
 ### Ưu và Nhược điểm
 
-| | Chi tiết |
-|---|---------|
-| ✅ **Flexible** | Control đầy đủ logic, có thể validate, transform, log |
-| ✅ **Framework-agnostic** | Implement được ở mọi framework |
-| ✅ **Easy to test** | Mock tenant context trong unit test |
-| ❌ **Application-level only** | Không bảo vệ direct DB access |
-| ❌ **Leak risk** | ThreadLocal/AsyncLocalStorage có thể leak giữa requests |
-| ❌ **Every entrypoint** | Phải apply middleware cho mọi entrypoint (HTTP, cron, queue, etc.) |
+|                               | Chi tiết                                                           |
+| ----------------------------- | ------------------------------------------------------------------ |
+| ✅ **Flexible**               | Control đầy đủ logic, có thể validate, transform, log              |
+| ✅ **Framework-agnostic**     | Implement được ở mọi framework                                     |
+| ✅ **Easy to test**           | Mock tenant context trong unit test                                |
+| ❌ **Application-level only** | Không bảo vệ direct DB access                                      |
+| ❌ **Leak risk**              | ThreadLocal/AsyncLocalStorage có thể leak giữa requests            |
+| ❌ **Every entrypoint**       | Phải apply middleware cho mọi entrypoint (HTTP, cron, queue, etc.) |
 
 ---
 
@@ -768,11 +724,11 @@ spec:
       containers:
         - name: app
           image: myapp:latest
-        - name: opa                           # ← OPA chạy cùng Pod với app
+        - name: opa # ← OPA chạy cùng Pod với app
           image: openpolicyagent/opa:latest
           args:
             - "run"
-            - "--server"                      # Expose HTTP API để Gateway hỏi
+            - "--server" # Expose HTTP API để Gateway hỏi
             - "/policies"
           volumeMounts:
             - name: policies
@@ -780,7 +736,7 @@ spec:
       volumes:
         - name: policies
           configMap:
-            name: tenant-policies             # Policy .rego lưu trong ConfigMap
+            name: tenant-policies # Policy .rego lưu trong ConfigMap
 ```
 
 ### Ví dụ: Kyverno (Kubernetes-native)
@@ -841,16 +797,16 @@ spec:
 
 ### Ưu và Nhược điểm
 
-| | Chi tiết |
-|---|---------|
-| ✅ **Infrastructure-level** | Bảo vệ trước khi request đến app |
-| ✅ **Centralized policy** | Định nghĩa 1 lần, apply cho toàn bộ cluster |
-| ✅ **Auditable** | Mọi decision được log |
-| ✅ **Language-agnostic** | Không phụ thuộc ngôn ngữ/framework |
-| ❌ **Complex setup** | OPA/Kyverno cần infrastructure riêng |
-| ❌ **Latency overhead** | Mỗi request qua thêm 1 policy check |
-| ❌ **Learning curve** | Rego language không phổ biến |
-| ❌ **K8s-specific** | Kyverno chỉ hoạt động trên Kubernetes |
+|                             | Chi tiết                                    |
+| --------------------------- | ------------------------------------------- |
+| ✅ **Infrastructure-level** | Bảo vệ trước khi request đến app            |
+| ✅ **Centralized policy**   | Định nghĩa 1 lần, apply cho toàn bộ cluster |
+| ✅ **Auditable**            | Mọi decision được log                       |
+| ✅ **Language-agnostic**    | Không phụ thuộc ngôn ngữ/framework          |
+| ❌ **Complex setup**        | OPA/Kyverno cần infrastructure riêng        |
+| ❌ **Latency overhead**     | Mỗi request qua thêm 1 policy check         |
+| ❌ **Learning curve**       | Rego language không phổ biến                |
+| ❌ **K8s-specific**         | Kyverno chỉ hoạt động trên Kubernetes       |
 
 ---
 
@@ -858,13 +814,13 @@ spec:
 
 ### Bảng so sánh
 
-| Kỹ thuật | Layer | Độ tin cậy | Performance impact | Complexity | Scope |
-|----------|:-----:|:----------:|:-------------------:|:----------:|:-----:|
-| **ORM Global Filter** | Application | 🟡 | Thấp | Thấp | Chỉ qua app |
-| **RLS** | Database | 🟢 | Trung bình (5-10%) | Trung bình | Mọi DB connection |
-| **View-based** | Database | 🟡 | Thấp | Trung bình | Mọi DB connection |
-| **App Middleware** | Application | 🟡 | Thấp | Thấp | Chỉ qua app |
-| **Policy-as-Code** | Infrastructure | 🟢 | Trung bình | Cao | Mọi request |
+| Kỹ thuật              |     Layer      | Độ tin cậy | Performance impact | Complexity |       Scope       |
+| --------------------- | :------------: | :--------: | :----------------: | :--------: | :---------------: |
+| **ORM Global Filter** |  Application   |     🟡     |        Thấp        |    Thấp    |    Chỉ qua app    |
+| **RLS**               |    Database    |     🟢     | Trung bình (5-10%) | Trung bình | Mọi DB connection |
+| **View-based**        |    Database    |     🟡     |        Thấp        | Trung bình | Mọi DB connection |
+| **App Middleware**    |  Application   |     🟡     |        Thấp        |    Thấp    |    Chỉ qua app    |
+| **Policy-as-Code**    | Infrastructure |     🟢     |     Trung bình     |    Cao     |    Mọi request    |
 
 ### Recommended combination theo model
 
