@@ -1,5 +1,10 @@
 import { defineDocs, defineConfig } from 'fumadocs-mdx/config';
-import { rehypeCodeDefaultOptions } from 'fumadocs-core/mdx-plugins';
+import {
+  rehypeCodeDefaultOptions,
+  remarkDirectiveAdmonition,
+} from 'fumadocs-core/mdx-plugins';
+import remarkDirective from 'remark-directive';
+import remarkGithubAdmonitions from 'remark-github-admonitions-to-directives';
 import { visit } from 'unist-util-visit';
 
 function remarkMermaid() {
@@ -28,7 +33,14 @@ export const docs = defineDocs({
 
 export default defineConfig({
   mdxOptions: {
-    remarkPlugins: [remarkMermaid],
+    // Convert GitHub alerts into directives, then render them as Fumadocs callouts.
+    remarkPlugins: (plugins) => [
+      remarkDirective,
+      remarkGithubAdmonitions,
+      remarkDirectiveAdmonition,
+      remarkMermaid,
+      ...plugins,
+    ],
     rehypeCodeOptions: {
       ...rehypeCodeDefaultOptions,
       // Shiki 4 no longer bundles some niche grammars such as Rego and PromQL.
