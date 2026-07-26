@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-Site tài liệu về kiến trúc Multi-Tenant. Dùng Next.js 15 + Fumadocs + MDX, deploy trên Cloudflare Workers.
+Site tài liệu về kiến trúc Multi-Tenant. Dùng Next.js 16 + Fumadocs + MDX, deploy trên Cloudflare Workers.
 
 ## Tech Stack
 
-- Next.js 15 (App Router)
+- Next.js 16 (App Router)
 - Fumadocs (core, mdx, ui)
 - TypeScript
 - MDX content với Mermaid diagram support

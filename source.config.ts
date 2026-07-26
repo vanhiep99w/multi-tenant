@@ -1,4 +1,5 @@
 import { defineDocs, defineConfig } from 'fumadocs-mdx/config';
+import { rehypeCodeDefaultOptions } from 'fumadocs-core/mdx-plugins';
 import { visit } from 'unist-util-visit';
 
 function remarkMermaid() {
@@ -28,5 +29,10 @@ export const docs = defineDocs({
 export default defineConfig({
   mdxOptions: {
     remarkPlugins: [remarkMermaid],
+    rehypeCodeOptions: {
+      ...rehypeCodeDefaultOptions,
+      // Shiki 4 no longer bundles some niche grammars such as Rego and PromQL.
+      fallbackLanguage: 'text',
+    },
   },
 });
