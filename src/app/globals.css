@@ -6,8 +6,10 @@
   --fd-font-mono: 'JetBrains Mono', monospace;
 }
 
-#nd-page article {
+/* Let the main document fill the space between the sidebar and table of contents. */
+#nd-page {
   max-width: none;
+  padding-inline: clamp(1rem, 1.5vw, 1.5rem);
 }
 
 .prose {
