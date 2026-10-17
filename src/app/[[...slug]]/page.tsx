@@ -2,6 +2,7 @@ import { source } from '@/lib/source';
 import { DocsPage, DocsBody, DocsTitle, DocsDescription } from 'fumadocs-ui/page';
 import { notFound, redirect } from 'next/navigation';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
+import { docsKitComponents } from '@/components/docs-kit';
 import { MermaidDiagram } from '@/components/mermaid';
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
@@ -27,7 +28,7 @@ export default async function Page({
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>
-        <MDX components={{ ...defaultMdxComponents, MermaidDiagram, Callout, Card, Cards, Step, Steps, Tab, Tabs, Accordion, Accordions, TypeTable }} />
+        <MDX components={{ ...defaultMdxComponents, ...docsKitComponents, MermaidDiagram, Callout, Card, Cards, Step, Steps, Tab, Tabs, Accordion, Accordions, TypeTable }} />
       </DocsBody>
     </DocsPage>
   );

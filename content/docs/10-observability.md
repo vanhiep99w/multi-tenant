@@ -7,30 +7,19 @@ description: "Tenant-aware logging (MDC, structured JSON), per-tenant metrics (M
 
 Observability trong multi-tenant phải **segment mọi thứ theo tenant_id** — logs, metrics, traces. Không có tenant context = không debug được, không billing được, không detect được noisy neighbor.
 
+```d2 title="Ba trụ cột observability cùng tenant context"
+direction: right
+logs: "Logs\ntenant_id trên mọi log line"
+metrics: "Metrics\ntenant_id là label / dimension"
+traces: "Traces\ntenant_id trong span / baggage"
+platform: "CloudWatch / Grafana / Datadog\nFilter tenant_id = acme\nLogs + Metrics + Traces của acme"
+logs -> platform
+metrics -> platform
+traces -> platform
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│              TENANT-AWARE OBSERVABILITY                         │
-│                                                                 │
-│  Three Pillars — tất cả đều PHẢI có tenant_id                   │
-│                                                                 │
-│  ┌──────────┐    ┌──────────┐    ┌──────────┐                   │
-│  │  LOGS    │    │ METRICS  │    │ TRACES   │                   │
-│  │          │    │          │    │          │                   │
-│  │ tenant_id│    │ tenant_id│    │ tenant_id│                   │
-│  │ in every │    │ as label/│    │ in span  │                   │
-│  │ log line │    │ dimension│    │ baggage  │                   │
-│  └────┬─────┘    └────┬─────┘    └────┬─────┘                   │
-│       │               │               │                         │
-│       ▼               ▼               ▼                         │
-│  ┌──────────────────────────────────────┐                       │
-│  │      Unified Observability Platform  │                       │
-│  │  (CloudWatch / Grafana / Datadog)    │                       │
-│  │                                      │                       │
-│  │  Filter by: tenant_id = "acme"       │                       │
-│  │  → Logs + Metrics + Traces cho acme  │                       │
-│  └──────────────────────────────────────┘                       │
-└─────────────────────────────────────────────────────────────────┘
-```
+
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
 
 ## Tenant-aware Logging
 
@@ -62,7 +51,7 @@ Mọi log line phải chứa **tenant_id** — đây là yêu cầu bắt buộc
 
 #### Implementation — MDC-based Tenant Logging
 
-```java
+```java source="observability" file="src/logging/TenantLoggingFilter.java"
 /**
  * Filter: inject tenant_id vào MDC (Mapped Diagnostic Context)
  * → Tất cả logs trong request sẽ tự động có tenant_id
@@ -99,7 +88,7 @@ public class TenantLoggingFilter extends OncePerRequestFilter {
 
 #### Logback Configuration — Structured JSON Output
 
-```xml
+```xml source="observability" file="config/logback-spring.xml"
 <!-- logback-spring.xml -->
 <configuration>
     <appender name="JSON_CONSOLE"
@@ -129,29 +118,20 @@ public class TenantLoggingFilter extends OncePerRequestFilter {
 
 #### Log Isolation — Per-Tenant Log Streams
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│              LOG ROUTING PER TENANT                          │
-│                                                              │
-│  Application Logs                                            │
-│       │                                                      │
-│       ▼                                                      │
-│  ┌──────────────────┐                                        │
-│  │ Log Router       │                                        │
-│  │ (Fluentd/Fluent  │                                        │
-│  │  Bit/Vector)     │                                        │
-│  └────┬─────────────┘                                        │
-│       │                                                      │
-│       ├──▶ /logs/platform/  (all tenants, platform ops)      │
-│       ├──▶ /logs/acme/      (tenant acme, 30 days retain)    │
-│       ├──▶ /logs/beta/      (tenant beta, 90 days retain)    │
-│       └──▶ /logs/enterprise/(tenant ent, 365 days retain)    │
-│                                                              │
-│  Retention per tier:                                         │
-│  ├── Free: 7 days                                            │
-│  ├── Pro: 30 days                                            │
-│  └── Enterprise: 365 days (+ S3 archive)                     │
-└──────────────────────────────────────────────────────────────┘
+```d2 title="Routing log theo tenant và policy retention"
+direction: right
+app: "Application Logs"
+router: "Fluentd / Fluent Bit / Vector"
+platform: "/logs/platform/\nMọi tenant · platform ops"
+acme: "/logs/acme/\nRetention 30 ngày"
+beta: "/logs/beta/\nRetention 90 ngày"
+ent: "/logs/enterprise/\nRetention 365 ngày + S3 archive"
+policy: "Retention theo tier (mẫu)\nFree: 7 ngày / Pro: 30 / Enterprise: 365"
+app -> router
+router -> platform
+router -> acme
+router -> beta
+router -> ent
 ```
 
 ## Tenant-aware Metrics
@@ -185,7 +165,7 @@ Metrics phải có **tenant_id** là dimension/label — cho phép filter, group
 
 #### Implementation — Micrometer Per-Tenant Metrics
 
-```java
+```java source="observability" file="src/metrics/TenantMetricsService.java"
 @Component
 public class TenantMetricsService {
 
@@ -276,25 +256,80 @@ Distributed tracing phải **propagate tenant_id** qua toàn bộ call chain —
 
 #### Tracing Architecture
 
-```mermaid
-graph LR
-    subgraph "Trace: req-abc-123"
-        A["API Gateway<br/>tenant_id=acme"] -->|gRPC| B["Order Service<br/>tenant_id=acme"]
-        B -->|HTTP| C["Payment Service<br/>tenant_id=acme"]
-        B -->|SQL| D["Database<br/>tenant_id=acme"]
-        C -->|HTTP| E["External Gateway<br/>tenant_id=acme"]
-    end
+```d2 title="Tracing Architecture"
+direction: right
+group1: "Trace: req-abc-123" {
+  A: "API Gateway\ntenant_id=acme"
+  B: "Order Service\ntenant_id=acme"
+  C: "Payment Service\ntenant_id=acme"
+  D: "Database\ntenant_id=acme"
+  E: "External Gateway\ntenant_id=acme"
+}
+group1.A -> group1.B: "gRPC"
+group1.B -> group1.C: "HTTP"
+group1.B -> group1.D: "SQL"
+group1.C -> group1.E: "HTTP"
+```
 
-    style A fill:#e3f2fd
-    style B fill:#e8f5e9
-    style C fill:#fff3e0
-    style D fill:#fce4ec
-    style E fill:#f3e5f5
+#### Đọc trace theo thời gian
+
+Sơ đồ trên cho biết service nào gọi nhau. Waterfall dưới đây bổ sung **thời điểm và thời lượng minh họa**, không suy ra critical path. Khi truyền context tới bên thứ ba, chỉ gửi metadata đã được cho phép.
+
+```span-waterfall
+title: Latency của request tenant Acme
+unit: ms
+provenance:
+  kind: illustrative
+  description: Trace tổng hợp để đọc timeline; không lấy từ production và không phải benchmark.
+spans:
+- id: request
+  name: GET /api/orders
+  service: api-gateway
+  start: 0
+  duration: 240
+  status: ok
+  attributes: '{"tenant.id":"acme","http.request.method":"GET"}'
+- id: order
+  parent: request
+  name: Order Service
+  service: order-service
+  start: 15
+  duration: 210
+  status: ok
+  attributes: '{"tenant.id":"acme","order.id":"ORD-001"}'
+- id: query
+  parent: order
+  name: SELECT orders WHERE tenant_id = acme
+  service: postgresql
+  start: 25
+  duration: 60
+  status: ok
+  attributes: '{"tenant.id":"acme","db.system.name":"postgresql"}'
+- id: payment
+  parent: order
+  name: Payment Service
+  service: payment-service
+  start: 95
+  duration: 115
+  status: ok
+  attributes: '{"tenant.id":"acme"}'
+- id: external
+  parent: payment
+  name: External Payment Gateway
+  service: payment-gateway
+  start: 110
+  duration: 80
+  status: ok
+annotations:
+- id: overlap
+  span: payment
+  title: Span cha và con chồng thời gian
+  description: Không cộng duration của span cha và con để suy ra request latency; trục này dùng cùng mốc 0.
 ```
 
 #### Implementation — OpenTelemetry with Tenant Context
 
-```java
+```java source="observability" file="src/tracing/TenantSpanProcessor.java"
 /**
  * OpenTelemetry SpanProcessor — inject tenant_id vào mọi span
  */
@@ -375,7 +410,7 @@ public class TenantBaggagePropagator {
 
 #### Trace Sampling — Per-Tenant Strategy
 
-```java
+```java source="observability" file="src/tracing/TenantTraceSampler.java"
 /**
  * Intelligent sampling: sample more for premium tenants,
  * always sample errors and slow requests
@@ -512,7 +547,7 @@ public class TenantTraceSampler implements Sampler {
 
 #### Alert Rules — Per-Tenant
 
-```yaml
+```yaml source="observability" file="config/prometheus-alerts.yaml"
 # prometheus-alerts.yml
 groups:
   - name: tenant_alerts

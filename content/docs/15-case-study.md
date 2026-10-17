@@ -7,6 +7,9 @@ description: "Case study thiết kế hệ thống SaaS Multi-Tenant end-to-end:
 
 Thiết kế **TaskFlow** — một SaaS Project Management Platform (tương tự Jira/Asana) phục vụ hàng ngàn organization.
 
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
+
 ## Business Requirements
 
 ```
@@ -50,63 +53,111 @@ Thiết kế **TaskFlow** — một SaaS Project Management Platform (tương t�
 
 ## System Architecture
 
-```mermaid
-graph TD
-    subgraph "Client Layer"
-        WEB[Web App<br/>React SPA]
-        MOB[Mobile App<br/>React Native]
-        API_CLIENT[API Clients<br/>SDK / Webhooks]
-    end
+Sơ đồ mở ở mức tổng quan để dễ đọc. Chọn **Explore** rồi node **Services — EKS** (hoặc chọn board `topology`) để xem toàn bộ thành phần và kết nối.
 
-    subgraph "Edge"
-        CF[CloudFront]
-        WAF[AWS WAF]
-        R53[Route 53<br/>*.taskflow.app]
-    end
-
-    subgraph "API Layer"
-        APIGW[API Gateway<br/>Rate limit per tenant]
-        AUTH[Lambda Authorizer<br/>JWT → tenant_id]
-        COGN[Cognito<br/>User Pool per tenant]
-    end
-
-    subgraph "Services — EKS"
-        PROJ[Project Service]
-        TASK[Task Service]
-        USER_SVC[User Service]
-        NOTIFY[Notification Service]
-        FILE[File Service]
-        REPORT[Reporting Service]
-    end
-
-    subgraph "Data Layer"
-        RDS_POOL[Aurora PostgreSQL<br/>Shared — Pool tenants]
-        RDS_ENT[Aurora PostgreSQL<br/>Dedicated — Enterprise]
-        REDIS[ElastiCache Redis<br/>Cache + Sessions]
-        S3_DATA[S3<br/>File Attachments]
-        ES[OpenSearch<br/>Full-text Search]
-    end
-
-    subgraph "Async"
-        SQS[SQS Queues]
-        SNS[SNS Topics]
-    end
-
-    WEB --> CF --> WAF --> APIGW
-    MOB --> APIGW
-    API_CLIENT --> APIGW
-    APIGW --> AUTH --> COGN
-    APIGW --> PROJ & TASK & USER_SVC
-    PROJ --> RDS_POOL & REDIS
-    TASK --> RDS_POOL & REDIS & ES
-    TASK --> SQS --> NOTIFY
-    FILE --> S3_DATA
-    REPORT --> RDS_POOL
+```d2 mode=explorer title="System Architecture"
+direction: down
+clients: "Clients\nWeb / Mobile / SDK / Webhooks"
+edge: "Edge\nCloudFront / WAF / Route 53" {
+  icon: ../assets/d2/icons/aws-cloudfront.svg
+}
+api: "API Gateway\nPer-tenant rate limit" {
+  icon: ../assets/d2/icons/aws-api-gateway.svg
+}
+auth: "Lambda Authorizer → Cognito\nJWT → tenant_id" {
+  icon: ../assets/d2/icons/aws-cognito.svg
+}
+services: "Services — EKS\nProject / Task / User / Notify / File / Report" {
+  icon: ../assets/d2/icons/aws-eks.svg
+  link: layers.topology
+  tooltip: "Xem từng service và các kết nối dữ liệu"
+}
+data: "Data\nAurora Pool + Silo / Redis / S3 / OpenSearch" {
+  icon: ../assets/d2/icons/aws-aurora.svg
+}
+async: "Async\nSQS / SNS" {
+  icon: ../assets/d2/icons/aws-sqs.svg
+}
+clients -> edge -> api
+api -> auth
+api -> services
+services -> data
+services -> async
+layers: {
+  topology: {
+    direction: down
+    group1: "Client Layer" {
+      WEB: "Web App\nReact SPA"
+      MOB: "Mobile App\nReact Native"
+      API_CLIENT: "API Clients\nSDK / Webhooks"
+    }
+    group2: "Edge" {
+      CF: "CloudFront"
+      WAF: "AWS WAF"
+      R53: "Route 53\n*.taskflow.app"
+    }
+    group3: "API Layer" {
+      APIGW: "API Gateway\nRate limit per tenant"
+      AUTH: "Lambda Authorizer\nJWT → tenant_id"
+      COGN: "Cognito\nUser Pool per tenant"
+    }
+    group4: "Services — EKS" {
+      PROJ: "Project Service"
+      TASK: "Task Service"
+      USER_SVC: "User Service"
+      NOTIFY: "Notification Service"
+      FILE: "File Service"
+      REPORT: "Reporting Service"
+    }
+    group5: "Data Layer" {
+      RDS_POOL: "Aurora PostgreSQL\nShared — Pool tenants"
+      RDS_ENT: "Aurora PostgreSQL\nDedicated — Enterprise"
+      REDIS: "ElastiCache Redis\nCache + Sessions"
+      S3_DATA: "S3\nFile Attachments"
+      ES: "OpenSearch\nFull-text Search"
+    }
+    group6: "Async" {
+      SQS: "SQS Queues"
+      SNS: "SNS Topics"
+    }
+    group1.WEB -> group2.CF
+    group2.CF -> group2.WAF
+    group2.WAF -> group3.APIGW
+    group1.MOB -> group3.APIGW
+    group1.API_CLIENT -> group3.APIGW
+    group3.APIGW -> group3.AUTH
+    group3.AUTH -> group3.COGN
+    group3.APIGW -> group4.PROJ
+    group3.APIGW -> group4.TASK
+    group3.APIGW -> group4.USER_SVC
+    group4.PROJ -> group5.RDS_POOL
+    group4.PROJ -> group5.REDIS
+    group4.TASK -> group5.RDS_POOL
+    group4.TASK -> group5.REDIS
+    group4.TASK -> group5.ES
+    group4.TASK -> group6.SQS
+    group6.SQS -> group4.NOTIFY
+    group4.FILE -> group5.S3_DATA
+    group4.REPORT -> group5.RDS_POOL
+    group2.CF.icon: ../assets/d2/icons/aws-cloudfront.svg
+    group2.WAF.icon: ../assets/d2/icons/aws-waf.svg
+    group2.R53.icon: ../assets/d2/icons/aws-route53.svg
+    group3.APIGW.icon: ../assets/d2/icons/aws-api-gateway.svg
+    group3.AUTH.icon: ../assets/d2/icons/aws-lambda.svg
+    group3.COGN.icon: ../assets/d2/icons/aws-cognito.svg
+    group5.RDS_POOL.icon: ../assets/d2/icons/aws-aurora.svg
+    group5.RDS_ENT.icon: ../assets/d2/icons/aws-aurora.svg
+    group5.REDIS.icon: ../assets/d2/icons/aws-elasticache.svg
+    group5.S3_DATA.icon: ../assets/d2/icons/aws-s3.svg
+    group6.SQS.icon: ../assets/d2/icons/aws-sqs.svg
+    group6.SNS.icon: ../assets/d2/icons/aws-sns.svg
+  }
+}
 ```
 
 ## Database Schema Design
 
-```sql
+```sql source="case-study" file="sql/taskflow-schema.sql"
 -- Shared database schema (Pool tenants — Free/Pro)
 -- RLS enabled on ALL tables
 
@@ -168,30 +219,23 @@ CREATE INDEX idx_tasks_tenant_assignee
 
 #### Request Flow — End to End
 
-```
-Client Request
-  │
-  ├─① CloudFront → WAF (IP filtering, rate limit)
-  ├─② API Gateway → Lambda Authorizer
-  │     └── Decode JWT → extract tenant_id, user_id
-  │     └── Check rate limit: 100 req/s (Free), 1000 (Pro)
-  ├─③ Service Pod → TenantContextFilter
-  │     └── Set ThreadLocal: tenantId, userId, tier
-  │     └── Set MDC: tenant_id (for logging)
-  │     └── Set Hibernate Filter: tenant_id
-  ├─④ Business Logic
-  │     └── All queries auto-filtered by tenant_id
-  │     └── All cache keys prefixed with tenant_id
-  ├─⑤ Database → RLS enforcement
-  │     └── SET app.current_tenant = '{tenant_id}'
-  │     └── RLS policy auto-filters rows
-  ├─⑥ Response → clear TenantContext
-  │     └── ThreadLocal.clear()
-  │     └── MDC.clear()
-  └─⑦ Observability
-        └── Log: JSON with tenant_id
-        └── Metric: http_requests{tenant_id=...}
-        └── Trace: span attribute tenant.id
+```d2 title="TaskFlow: đường đi request từ Edge đến dữ liệu"
+direction: down
+n0: "① Edge\nCloudFront → WAF\nIP filtering / Rate limit"
+n1: "② API Gateway + Lambda Authorizer\nJWT → tenant_id, user_id\nFree: 100 req/s · Pro: 1000 req/s"
+n2: "③ TenantContextFilter\nThreadLocal: tenant, user, tier\nMDC + Hibernate tenant filter"
+n3: "④ Business Logic\nQuery auto-filter theo tenant\nCache key có tenant prefix"
+n4: "⑤ Database / RLS\nSET app.current_tenant\nPolicy tự lọc rows"
+n5: "⑥ Response / finally\nClear ThreadLocal + MDC"
+n6: "⑦ Observability\nJSON log / Metrics / Trace\nTất cả kèm tenant_id"
+n0 -> n1
+n1 -> n2
+n2 -> n3
+n3 -> n4
+n4 -> n5
+n5 -> n6
+n0.icon: ../assets/d2/icons/aws-cloudfront.svg
+n1.icon: ../assets/d2/icons/aws-api-gateway.svg
 ```
 
 ## Lessons Learned

@@ -21,21 +21,21 @@ description: "Multi-Tenancy là gì, so sánh Single-Tenant vs Multi-Tenant, t�
 
 **Multi-Tenancy** là một mô hình kiến trúc phần mềm trong đó **một instance duy nhất** của ứng dụng phục vụ **nhiều khách hàng (tenant)** đồng thời. Mỗi tenant chia sẻ cùng hạ tầng, codebase và tài nguyên hệ thống, nhưng dữ liệu và cấu hình của họ được **cách ly logic** với nhau.
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    MULTI-TENANT ARCHITECTURE                        │
-│                                                                     │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
-│  │ Tenant A │  │ Tenant B │  │ Tenant C │  │ Tenant D │             │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘             │
-│       │             │             │             │                   │
-│  ─────┴─────────────┴─────────────┴─────────────┴──────────         │
-│              Shared Infrastructure / Isolated Data                  │
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────┐           │
-│  │  Shared Services │ Shared Compute │ Shared Network   │           │
-│  └──────────────────────────────────────────────────────┘           │
-└─────────────────────────────────────────────────────────────────────┘
+```d2 title="Kiến trúc Multi-Tenant"
+direction: down
+a: Tenant A
+b: Tenant B
+c: Tenant C
+d: Tenant D
+shared: "Hạ tầng dùng chung / Dữ liệu cách ly" {
+  services: Shared Services
+  compute: Shared Compute
+  network: Shared Network
+}
+a -> shared
+b -> shared
+c -> shared
+d -> shared
 ```
 
 > [!IMPORTANT]
@@ -60,26 +60,18 @@ description: "Multi-Tenancy là gì, so sánh Single-Tenant vs Multi-Tenant, t�
 
 ## Phân biệt Tenant vs User vs Organization
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    SaaS Platform                    │
-│                                                     │
-│  ┌───────────────────────┐  ┌─────────────────────┐ │
-│  │      Tenant A         │  │     Tenant B        │ │
-│  │   (ACME Corp)         │  │   (Beta Inc)        │ │
-│  │                       │  │                     │ │
-│  │  ┌─────┐  ┌─────┐     │  │  ┌─────┐  ┌─────┐   │ │
-│  │  │Admin│  │User │     │  │  │Admin│  │User │   │ │
-│  │  │John │  │Jane │     │  │  │Bob  │  │Alice│   │ │
-│  │  └─────┘  └─────┘     │  │  └─────┘  └─────┘   │ │
-│  │                       │  │                     │ │
-│  │  Organization = Tenant│  │  Organization=Tenant│ │
-│  │  Users ⊂ Tenant       │  │  Users ⊂ Tenant     │ │
-│  └───────────────────────┘  └─────────────────────┘ │
-│                                                     │
-│  Tenant boundary = ranh giới isolation              │
-│  User = cá nhân đăng nhập, thuộc về 1 tenant        │
-└─────────────────────────────────────────────────────┘
+```d2 title="User thuộc tenant, tenant đại diện tổ chức"
+direction: right
+platform: "SaaS Platform — ranh giới tenant = ranh giới cách ly" {
+  acme: "Tenant A / ACME Corp" {
+    john: "John · Admin"
+    jane: "Jane · User"
+  }
+  beta: "Tenant B / Beta Inc" {
+    bob: "Bob · Admin"
+    alice: "Alice · User"
+  }
+}
 ```
 
 **Quy tắc quan trọng:**
@@ -97,40 +89,39 @@ description: "Multi-Tenancy là gì, so sánh Single-Tenant vs Multi-Tenant, t�
 
 Mỗi khách hàng có **instance riêng** của toàn bộ ứng dụng: codebase, database, infra tách biệt hoàn toàn.
 
-```
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│   Instance A    │  │   Instance B    │  │   Instance C    │
-│  (Customer A)   │  │  (Customer B)   │  │  (Customer C)   │
-│                 │  │                 │  │                 │
-│  ┌──────────┐   │  │  ┌──────────┐   │  │  ┌──────────┐   │
-│  │   App    │   │  │  │   App    │   │  │  │   App    │   │
-│  └────┬─────┘   │  │  └────┬─────┘   │  │  └────┬─────┘   │
-│  ┌────┴─────┐   │  │  ┌────┴─────┐   │  │  ┌────┴─────┐   │
-│  │    DB    │   │  │  │    DB    │   │  │  │    DB    │   │
-│  └──────────┘   │  │  └──────────┘   │  │  └──────────┘   │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
-   Riêng biệt            Riêng biệt           Riêng biệt
+```d2 title="Single-Tenant: mỗi khách hàng một instance"
+direction: right
+a: "Tenant A" {
+  app: "Application"
+  db: "Database riêng" {shape: cylinder}
+  app -> db
+}
+b: "Tenant B" {
+  app: "Application"
+  db: "Database riêng" {shape: cylinder}
+  app -> db
+}
+c: "Tenant C" {
+  app: "Application"
+  db: "Database riêng" {shape: cylinder}
+  app -> db
+}
 ```
 
 ### Kiến trúc Multi-Tenant
 
 Tất cả khách hàng chia sẻ **cùng một instance** của ứng dụng, dữ liệu được cách ly bằng logic.
 
-```
-┌──────────────────────────────────────────────────────┐
-│              Shared Application Instance             │
-│                                                      │
-│  ┌─────────────────────────────────────────────────┐ │
-│  │              Application Layer                  │ │
-│  │      Tenant Context → Route → Process           │ │
-│  └────────────────────┬────────────────────────────┘ │
-│                       │                              │
-│  ┌────────┬───────────┼───────────┬────────────────┐ │
-│  │Tenant A│  Tenant B │  Tenant C │   Tenant D     │ │
-│  │ Data   │  Data     │  Data     │   Data         │ │
-│  └────────┴───────────┴───────────┴────────────────┘ │
-│           Shared Database (logical isolation)        │
-└──────────────────────────────────────────────────────┘
+```d2 title="Multi-Tenant: dùng chung ứng dụng, cách ly dữ liệu"
+direction: down
+app: "Application Layer\nTenant Context → Route → Process"
+db: "Shared Database — cách ly logic" {
+  a: Dữ liệu tenant A
+  b: Dữ liệu tenant B
+  c: Dữ liệu tenant C
+  d: Dữ liệu tenant D
+}
+app -> db
 ```
 
 ### Bảng so sánh toàn diện
@@ -152,17 +143,24 @@ Tất cả khách hàng chia sẻ **cùng một instance** của ứng dụng, d
 
 ### Khi nào chọn Single-Tenant?
 
-```mermaid
-graph TD
-    A[Yêu cầu dự án] --> B{Compliance cực kỳ nghiêm ngặt?}
-    B -->|Có| C[Single-Tenant ✅]
-    B -->|Không| D{Khách hàng yêu cầu<br/>infra riêng biệt?}
-    D -->|Có| C
-    D -->|Không| E{Số lượng khách hàng < 10<br/>và mỗi khách rất lớn?}
-    E -->|Có| C
-    E -->|Không| F{Cần customization<br/>cực kỳ sâu per customer?}
-    F -->|Có| C
-    F -->|Không| G[Multi-Tenant ✅]
+```d2 title="Khi nào chọn Single-Tenant?"
+direction: down
+A: "Yêu cầu dự án"
+B: "Compliance cực kỳ nghiêm ngặt?" {shape: diamond}
+C: "Single-Tenant ✅"
+D: "Khách hàng yêu cầu\ninfra riêng biệt?" {shape: diamond}
+E: "Số lượng khách hàng < 10\nvà mỗi khách rất lớn?" {shape: diamond}
+F: "Cần customization\ncực kỳ sâu per customer?" {shape: diamond}
+G: "Multi-Tenant ✅"
+A -> B
+B -> C: "Có"
+B -> D: "Không"
+D -> C: "Có"
+D -> E: "Không"
+E -> C: "Có"
+E -> F: "Không"
+F -> C: "Có"
+F -> G: "Không"
 ```
 
 ---
@@ -262,23 +260,15 @@ Một dòng code thiếu sót có thể lộ data toàn bộ tenant:
 
 ### Thách thức 2: Noisy Neighbor
 
-```
-Tenant A: 10 requests/giây (bình thường)
-Tenant B: 10,000 requests/giây (spike đột biến)
-
-Hậu quả (nếu không có isolation):
-┌──────────────────────────────────────────┐
-│  Shared Resource Pool                    │
-│                                          │
-│  CPU:  [████████████████████████████░░]  │
-│         ↑ Tenant B chiếm 90% CPU         │
-│                                          │
-│  Tenant A response time: 200ms → 5000ms  │
-│  Tenant C response time: 150ms → 3000ms  │
-│  Tenant B response time: 100ms → 200ms   │
-│                                          │
-│  → Tất cả tenant khác bị ảnh hưởng!      │
-└──────────────────────────────────────────┘
+```d2 title="Noisy Neighbor khi chưa có giới hạn tài nguyên"
+direction: right
+a: "Tenant A\n10 requests/giây"
+b: "Tenant B\n10.000 requests/giây"
+pool: "Shared Resource Pool\nTenant B chiếm 90% CPU"
+result: "Tenant A: 200 → 5000 ms\nTenant C: 150 → 3000 ms\nTenant B: 100 → 200 ms\nCác tenant khác bị ảnh hưởng"
+a -> pool
+b -> pool: Spike
+pool -> result
 ```
 
 **Giải pháp**: Rate limiting, resource quotas, tenant-aware scaling, circuit breaker per tenant (chi tiết ở [Noisy Neighbor Problem](./07-noisy-neighbor.md))
@@ -298,30 +288,28 @@ Mỗi tenant có nhu cầu khác nhau nhưng phải chạy trên **cùng một c
 
 ### Thách thức 4: Compliance & Data Residency
 
-```mermaid
-graph LR
-    subgraph "Regulations"
-        GDPR["🇪🇺 GDPR<br/>Data phải ở EU"]
-        HIPAA["🇺🇸 HIPAA<br/>Healthcare data encrypted"]
-        PDPA["🇹🇭 PDPA<br/>Data ở Thailand"]
-        LGPD["🇧🇷 LGPD<br/>Data ở Brazil"]
-    end
-
-    subgraph "Challenges"
-        C1["Data residency per tenant"]
-        C2["Encryption per tenant"]
-        C3["Right to be forgotten"]
-        C4["Audit trail per tenant"]
-        C5["Data export per tenant"]
-    end
-
-    GDPR --> C1
-    GDPR --> C3
-    GDPR --> C5
-    HIPAA --> C2
-    HIPAA --> C4
-    PDPA --> C1
-    LGPD --> C1
+```d2 title="Thách thức 4: Compliance & Data Residency"
+direction: right
+group1: "Regulations" {
+  GDPR: "🇪🇺 GDPR\nData phải ở EU"
+  HIPAA: "🇺🇸 HIPAA\nHealthcare data encrypted"
+  PDPA: "🇹🇭 PDPA\nData ở Thailand"
+  LGPD: "🇧🇷 LGPD\nData ở Brazil"
+}
+group2: "Challenges" {
+  C1: "Data residency per tenant"
+  C2: "Encryption per tenant"
+  C3: "Right to be forgotten"
+  C4: "Audit trail per tenant"
+  C5: "Data export per tenant"
+}
+group1.GDPR -> group2.C1
+group1.GDPR -> group2.C3
+group1.GDPR -> group2.C5
+group1.HIPAA -> group2.C2
+group1.HIPAA -> group2.C4
+group1.PDPA -> group2.C1
+group1.LGPD -> group2.C1
 ```
 
 **Vấn đề cụ thể:**

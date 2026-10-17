@@ -7,23 +7,23 @@ description: "Cách xác định tenant từ request (JWT, subdomain, header), t
 
 Tenant Identity & Context Propagation là **xương sống** của mọi hệ thống multi-tenant. Mỗi request đi vào hệ thống phải được **xác định thuộc về tenant nào** (Identity) và thông tin đó phải được **truyền xuyên suốt** qua tất cả các layer, service, message queue (Propagation) — không bao giờ bị mất.
 
+```d2 title="Tenant context phải xuyên suốt mọi bước"
+direction: right
+n0: "① Resolve\nSubdomain / Header / JWT / Path"
+n1: "② Set Context\nMiddleware / Interceptor\nThreadLocal / Context / AsyncLocal"
+n2: "③ Propagate\nService-to-service / Event Bus / Queue"
+n3: "④ Enforce\nDB filter / Cache key / Storage / Log"
+n0 -> n1
+n1 -> n2
+n2 -> n3
+n1.tooltip: "Mở code triển khai trong Source Explorer"
+n1.link: "./?source=tenant-identity&file=src/web/TenantInterceptor.java"
+n2.tooltip: "Mở code triển khai trong Source Explorer"
+n2.link: "./?source=tenant-identity&file=src/events/TenantAwareKafkaProducer.java"
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│              TENANT CONTEXT LIFECYCLE                               │
-│                                                                     │
-│  ① RESOLVE        ② SET CONTEXT      ③ PROPAGATE       ④ ENFORCE │
-│                                                                     │
-│  Client Request   Middleware/         Service-to-Service  DB Query  │
-│  ───────────►     Interceptor         ───────────────►    Filter    │
-│                   ───────────►        Event Bus           Cache Key │
-│  Subdomain?                           Message Queue       Storage   │
-│  Header?          ThreadLocal /                           Logging   │
-│  JWT Claim?       Context Object                                    │
-│  Path?            AsyncLocal                                        │
-│                                                                     │
-│  ⚠️ Nếu bất kỳ bước nào bị thiếu → Cross-Tenant Data Leak!          │
-└─────────────────────────────────────────────────────────────────────┘
-```
+
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
 
 ## Tenant Resolution Strategies
 
@@ -31,45 +31,47 @@ Tenant Identity & Context Propagation là **xương sống** của mọi hệ th
 
 #### Tổng quan các chiến lược
 
-```mermaid
-graph LR
-    subgraph "Tenant Resolution Strategies"
-        A["① Subdomain\nacme.app.com"]
-        B["② Custom Header\nX-Tenant-ID: acme"]
-        C["③ JWT Claim\ntenant_id: acme"]
-        D["④ URL Path\n/api/acme/orders"]
-        E["⑤ Query Param\n?tenant=acme"]
-    end
-
-    A --> R[Tenant Router]
-    B --> R
-    C --> R
-    D --> R
-    E --> R
-    R --> CTX[Set Tenant Context]
+```d2 title="Tổng quan các chiến lược"
+direction: right
+group1: "Tenant Resolution Strategies" {
+  A: "① Subdomain\nacme.app.com"
+  B: "② Custom Header\nX-Tenant-ID: acme"
+  C: "③ JWT Claim\ntenant_id: acme"
+  D: "④ URL Path\n/api/acme/orders"
+  E: "⑤ Query Param\n?tenant=acme"
+}
+R: "Tenant Router"
+CTX: "Set Tenant Context"
+group1.A -> R
+group1.B -> R
+group1.C -> R
+group1.D -> R
+group1.E -> R
+R -> CTX
 ```
 
 #### ① Subdomain-based Resolution
 
 Mỗi tenant có **subdomain riêng**. Đây là chiến lược phổ biến nhất cho SaaS B2B.
 
-```
-┌─────────────────────────────────────────────────────┐
-│  SUBDOMAIN RESOLUTION                               │
-│                                                     │
-│  acme.myapp.com    ──►  tenant_id = "acme"          │
-│  beta.myapp.com    ──►  tenant_id = "beta"          │
-│  gamma.myapp.com   ──►  tenant_id = "gamma"         │
-│                                                     │
-│  Custom domain (CNAME):                             │
-│  app.acme-corp.com ──►  tenant_id = "acme"          │
-│  (DNS CNAME → acme.myapp.com)                       │
-└─────────────────────────────────────────────────────┘
+```d2 title="Resolve tenant từ subdomain hoặc custom domain"
+direction: right
+acme: "acme.myapp.com"
+beta: "beta.myapp.com"
+gamma: "gamma.myapp.com"
+custom: "app.acme-corp.com"
+a: "tenant_id = acme"
+b: "tenant_id = beta"
+c: "tenant_id = gamma"
+custom -> acme: DNS CNAME
+acme -> a
+beta -> b
+gamma -> c
 ```
 
 **Implementation:**
 
-```java
+```java source="tenant-identity" file="src/resolvers/SubdomainTenantResolver.java"
 @Component
 public class SubdomainTenantResolver implements TenantResolver {
 
@@ -135,23 +137,58 @@ server {
 
 Tenant ID được truyền qua **custom HTTP header**. Phù hợp cho API-first architectures.
 
-```
-┌─────────────────────────────────────────────────────┐
-│  HEADER-BASED RESOLUTION                            │
-│                                                     │
-│  POST /api/orders HTTP/1.1                          │
-│  Host: api.myapp.com                                │
-│  X-Tenant-ID: acme                     ◄── tenant   │
-│  Authorization: Bearer eyJ...                       │
-│  Content-Type: application/json                     │
-│                                                     │
-│  {"item": "laptop", "qty": 1}                       │
-└─────────────────────────────────────────────────────┘
+Request/response dưới đây là **minh họa hợp đồng API**, không gửi request thật. Token là placeholder; header tenant không thay thế việc xác thực JWT.
+
+```protocol-exchange
+title: Tenant header phải khớp JWT đã xác thực
+variants:
+- id: ok
+  title: Tenant hợp lệ
+  request:
+    method: POST
+    url: https://api.myapp.com/api/orders
+    headers:
+    - id: tenant
+      name: X-Tenant-ID
+      value: acme
+    - id: auth
+      name: Authorization
+      value: Bearer <JWT_MINH_HOA_TENANT_ACME>
+    - id: type
+      name: Content-Type
+      value: application/json
+    body:
+      kind: json
+      json: '{"item":"laptop","qty":1}'
+  response:
+    status: 201
+    statusText: Created
+    body:
+      kind: json
+      json: '{"id":"ORD-001","tenant_id":"acme"}'
+- id: mismatch
+  title: Từ chối header tenant khác JWT
+  request:
+    method: POST
+    url: https://api.myapp.com/api/orders
+    headers:
+    - id: tenant
+      name: X-Tenant-ID
+      value: beta
+    - id: auth
+      name: Authorization
+      value: Bearer <JWT_MINH_HOA_TENANT_ACME>
+  response:
+    status: 403
+    statusText: Forbidden
+    body:
+      kind: json
+      json: '{"error":"tenant_mismatch"}'
 ```
 
 **Implementation:**
 
-```java
+```java source="tenant-identity" file="src/resolvers/HeaderTenantResolver.java"
 @Component
 public class HeaderTenantResolver implements TenantResolver {
 
@@ -214,7 +251,7 @@ Tenant ID **nhúng trong JWT token** — cách **an toàn nhất** vì token đ�
 
 **Implementation:**
 
-```java
+```java source="tenant-identity" file="src/resolvers/JwtTenantResolver.java"
 @Component
 public class JwtTenantResolver implements TenantResolver {
 
@@ -314,7 +351,7 @@ GET /api/orders?tenant_id=acme       → tenant_id = "acme"
 
 Trong thực tế, thường **kết hợp nhiều chiến lược** và ưu tiên theo thứ tự:
 
-```java
+```java source="tenant-identity" file="src/resolvers/CompositeTenantResolver.java"
 @Component
 public class CompositeTenantResolver implements TenantResolver {
 
@@ -345,15 +382,22 @@ public class CompositeTenantResolver implements TenantResolver {
 }
 ```
 
-```
-Resolution Priority:
-┌─────────────────────────────────────────────┐
-│  1. JWT Claim (nếu có Bearer token)         │  ← Tin cậy nhất
-│  2. HTTP Header (nếu internal service call) │  ← Service mesh
-│  3. Subdomain (nếu browser request)         │  ← User-facing
-│  4. URL Path (fallback)                     │  ← REST API
-│  5. ❌ Reject request                       │  ← Không xác định
-└─────────────────────────────────────────────┘
+```d2 title="Thứ tự resolution — vẫn phải xác thực tenant với danh tính người dùng"
+direction: down
+jwt: "Có JWT claim hợp lệ?" {shape: diamond}
+header: "Có header từ internal service?" {shape: diamond}
+domain: "Có subdomain?" {shape: diamond}
+path: "Có tenant trong URL path?" {shape: diamond}
+context: Set Tenant Context
+reject: Reject request
+jwt -> context: Có
+jwt -> header: Không
+header -> context: Có
+header -> domain: Không
+domain -> context: Có
+domain -> path: Không
+path -> context: Có
+path -> reject: Không
 ```
 
 ## Tenant Context trong Microservice
@@ -362,7 +406,7 @@ Sau khi resolve được tenant, bước tiếp theo là **lưu tenant context**
 
 #### Tenant Context Object
 
-```java
+```java source="tenant-identity" file="src/context/TenantContext.java"
 // TenantContext.java — Immutable context object
 public record TenantContext(
     String tenantId,          // "acme"
@@ -384,7 +428,7 @@ public record TenantContext(
 
 **ThreadLocal** lưu tenant context **per-thread** — mỗi request thread có context riêng, không chia sẻ.
 
-```java
+```java source="tenant-identity" file="src/context/TenantContextHolder.java"
 public class TenantContextHolder {
 
     private static final ThreadLocal<TenantContext> CONTEXT =
@@ -419,7 +463,7 @@ public class TenantContextHolder {
 
 **Interceptor tự động set/clear context:**
 
-```java
+```java source="tenant-identity" file="src/web/TenantInterceptor.java"
 @Component
 public class TenantInterceptor implements HandlerInterceptor {
 
@@ -482,73 +526,103 @@ public class WebConfig implements WebMvcConfigurer {
 
 **⚠️ Vấn đề quan trọng:** ThreadLocal **không tự động truyền** sang thread khác (async, thread pool, @Async, CompletableFuture).
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  ⚠️ THREADLOCAL + ASYNC = CONTEXT LOST!                 │
-│                                                         │
-│  Request Thread (có context):                           │
-│  ┌─────────────────────────────┐                        │
-│  │ TenantContext = "acme"      │                        │
-│  │                             │                        │
-│  │ CompletableFuture.runAsync( │                        │
-│  │   () -> {                   │                        │
-│  │     // ❌ TenantContext = null!                      │
-│  │     // Chạy trên thread pool thread khác             │
-│  │   }                         │                        │
-│  │ );                          │                        │
-│  └─────────────────────────────┘                        │
-│                                                         │
-│  FIX: Dùng InheritableThreadLocal hoặc TaskDecorator    │
-└─────────────────────────────────────────────────────────┘
+```d2 title="Async task không tự kế thừa ThreadLocal"
+direction: right
+request: "Request thread\nTenantContext = acme"
+child: "CompletableFuture.runAsync\nThread pool khác\nTenantContext = null"
+fix: "TaskDecorator / truyền context tường minh\nKhôi phục và clear sau task"
+request -> child: Mất context
+request -> fix: Capture context
+fix -> child: Restore context
+fix.tooltip: "Mở code triển khai trong Source Explorer"
+fix.link: "./?source=tenant-identity&file=src/context/TenantAwareTaskDecorator.java"
 ```
 
 **Fix 1: TaskDecorator (Spring) — Recommended:**
 
-```java
-@Component
-public class TenantAwareTaskDecorator implements TaskDecorator {
+```code-walkthrough
+title: TaskDecorator truyền và dọn tenant context
+language: java
+snapshots:
+- id: decorator
+  title: TenantAwareTaskDecorator.java
+  code: |-
+    @Component
+    public class TenantAwareTaskDecorator implements TaskDecorator {
 
-    @Override
-    public Runnable decorate(Runnable runnable) {
-        // Capture context trên calling thread
-        TenantContext ctx = TenantContextHolder.get();
-        Map<String, String> mdcContext = MDC.getCopyOfContextMap();
+        @Override
+        public Runnable decorate(Runnable runnable) {
+            // Capture context trên calling thread
+            TenantContext ctx = TenantContextHolder.get();
+            Map<String, String> mdcContext = MDC.getCopyOfContextMap();
 
-        return () -> {
-            try {
-                // Set context trên worker thread
-                TenantContextHolder.set(ctx);
-                if (mdcContext != null) MDC.setContextMap(mdcContext);
-                runnable.run();
-            } finally {
-                // Clear trên worker thread
-                TenantContextHolder.clear();
-                MDC.clear();
-            }
-        };
+            return () -> {
+                try {
+                    // Set context trên worker thread
+                    TenantContextHolder.set(ctx);
+                    if (mdcContext != null) MDC.setContextMap(mdcContext);
+                    runnable.run();
+                } finally {
+                    // Clear trên worker thread
+                    TenantContextHolder.clear();
+                    MDC.clear();
+                }
+            };
+        }
     }
-}
 
-// Cấu hình thread pool
-@Configuration
-@EnableAsync
-public class AsyncConfig {
+    // Cấu hình thread pool
+    @Configuration
+    @EnableAsync
+    public class AsyncConfig {
 
-    @Bean
-    public Executor taskExecutor(TenantAwareTaskDecorator decorator) {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(10);
-        executor.setMaxPoolSize(50);
-        executor.setTaskDecorator(decorator);  // ← Truyền context
-        executor.initialize();
-        return executor;
+        @Bean
+        public Executor taskExecutor(TenantAwareTaskDecorator decorator) {
+            ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+            executor.setCorePoolSize(10);
+            executor.setMaxPoolSize(50);
+            executor.setTaskDecorator(decorator);  // ← Truyền context
+            executor.initialize();
+            return executor;
+        }
     }
-}
+  source:
+    project: tenant-identity
+    file: src/context/TenantAwareTaskDecorator.java
+steps:
+- id: capture
+  snapshot: decorator
+  title: 1. Capture trên request thread
+  description: Chụp TenantContext và MDC trước khi đưa task vào hàng đợi.
+  ranges:
+  - - 7
+    - 8
+- id: restore
+  snapshot: decorator
+  title: 2. Restore trên worker thread
+  description: Worker nhận đúng tenant trước khi chạy business logic.
+  ranges:
+  - - 13
+    - 15
+- id: cleanup
+  snapshot: decorator
+  title: 3. Dọn trong finally
+  description: Luôn xóa context và MDC, kể cả khi task ném exception; tránh rò tenant sang task kế tiếp.
+  ranges:
+  - - 16
+    - 19
+- id: register
+  snapshot: decorator
+  title: 4. Đăng ký với executor
+  description: TaskDecorator chỉ có tác dụng trên executor đã được cấu hình sử dụng nó.
+  ranges:
+  - - 35
+    - 36
 ```
 
 **Fix 2: Context wrapper cho CompletableFuture:**
 
-```java
+```java source="tenant-identity" file="src/context/TenantAwareExecutor.java"
 public class TenantAwareExecutor {
 
     public static <T> CompletableFuture<T> supplyAsync(
@@ -701,26 +775,22 @@ Khi service A gọi service B qua **message queue** (SQS, Kafka, RabbitMQ) hoặ
 
 #### Luồng propagation tổng quan
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant GW as API Gateway
-    participant OrderSvc as Order Service
-    participant Queue as Message Queue
-    participant PaymentSvc as Payment Service
-    participant DB as Database
-
-    Client->>GW: POST /orders (JWT: tenant=acme)
-    GW->>OrderSvc: X-Tenant-ID: acme
-    Note over OrderSvc: Set TenantContext = "acme"
-    
-    OrderSvc->>Queue: Publish OrderCreated Event
-    Note over Queue: Message Headers:<br/>tenant_id: acme<br/>correlation_id: uuid-123<br/>source: order-service
-    
-    Queue->>PaymentSvc: Consume Event
-    Note over PaymentSvc: Extract tenant_id from headers<br/>Set TenantContext = "acme"
-    
-    PaymentSvc->>DB: SELECT WHERE tenant_id = 'acme'
+```d2 title="Truyền tenant context qua service và message queue"
+shape: sequence_diagram
+client: Client
+gw: API Gateway
+order: Order Service
+queue: Message Queue
+payment: Payment Service
+db: Database
+client -> gw: "POST /orders · JWT tenant=acme"
+gw -> order: "X-Tenant-ID: acme"
+order."Set TenantContext = acme"
+order -> queue: Publish OrderCreated
+queue."Headers: tenant_id=acme / correlation_id=uuid-123 / source=order-service"
+queue -> payment: Consume Event
+payment."Extract tenant_id → Set TenantContext = acme"
+payment -> db: "SELECT WHERE tenant_id = 'acme'"
 ```
 
 #### Event Format — Chuẩn hóa
@@ -764,7 +834,7 @@ sequenceDiagram
 
 **Producer (auto-inject tenant context):**
 
-```java
+```java source="tenant-identity" file="src/events/TenantAwareKafkaProducer.java"
 @Component
 public class TenantAwareKafkaProducer {
 
@@ -798,7 +868,7 @@ public class TenantAwareKafkaProducer {
 
 **Consumer (auto-extract tenant context):**
 
-```java
+```java source="tenant-identity" file="src/events/TenantAwareKafkaConsumer.java"
 @Component
 public class TenantAwareKafkaConsumer {
 

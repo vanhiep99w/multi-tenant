@@ -29,3 +29,8 @@ yarn-error.log*
 # workers
 .wrangler/
 .dev.vars
+
+# generated docs-kit assets and renderer cache
+.cache/
+public/source-examples/
+public/source-examples.tmp/

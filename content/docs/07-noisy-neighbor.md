@@ -7,45 +7,51 @@ description: "Phát hiện và giải quyết noisy neighbor: detection, monitor
 
 **Noisy Neighbor** là hiện tượng **một tenant tiêu thụ tài nguyên quá mức**, làm **suy giảm hiệu năng** của các tenant khác cùng chia sẻ infrastructure. Đây là thách thức lớn nhất của mô hình Pool (shared compute).
 
+```d2 title="Một tenant chiếm phần lớn tài nguyên dùng chung"
+direction: right
+a: "Tenant A\n80% tài nguyên"
+others: "Tenants B–F\n20% tài nguyên"
+pool: "Shared Pool\nCPU / Memory / DB Connections / I/O"
+impact: "Tenants B–F: latency tăng 5–10 lần\nTimeout / 5xx tăng\nVi phạm SLA → khách hàng rời bỏ"
+a -> pool
+others -> pool
+pool -> impact
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                    NOISY NEIGHBOR PROBLEM                        │
-│                                                                  │
-│  Shared Resource Pool (CPU, Memory, DB Connections, I/O)         │
-│  ┌────────────────────────────────────────────────────────┐      │
-│  │  ████████████████████████████████████░░░░░░░░░░░░░░░░  │      │
-│  │  ▲ Tenant A: 80% resources!!!       ▲ Tenant B-F: 20%  │      │
-│  └────────────────────────────────────────────────────────┘      │
-│                                                                  │
-│  Hậu quả:                                                        │
-│  • Tenant B-F: tăng latency 5x-10x                               │
-│  • Timeout, 5xx errors tăng vọt                                  │
-│  • SLA violation cho tất cả tenant                               │
-│  • Customer churn — tenant trả tiền bỏ đi vì "app chậm"          │
-└──────────────────────────────────────────────────────────────────┘
-```
+
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
 
 ## Nguyên nhân và tác động
 
 #### Nguyên nhân phổ biến
 
-```mermaid
-graph TD
-    NP[🔊 Noisy Neighbor Problem]
-
-    NP --> CPU[CPU Hogging]
-    NP --> MEM[Memory Pressure]
-    NP --> IO[I/O Saturation]
-    NP --> DB[DB Connection Exhaustion]
-    NP --> NET[Network Bandwidth]
-    NP --> Q[Queue Flooding]
-
-    CPU --> CPU1["Tenant chạy heavy computation<br/>(ML inference, report gen)"]
-    MEM --> MEM1["Tenant load dataset lớn vào memory<br/>(cache abuse, large payloads)"]
-    IO --> IO1["Tenant bulk insert/export<br/>(full table scan, mass upload)"]
-    DB --> DB1["Tenant mở quá nhiều connections<br/>(connection leak, long transactions)"]
-    NET --> NET1["Tenant transfer file lớn<br/>(video upload, data export)"]
-    Q --> Q1["Tenant flood message queue<br/>(batch job, webhook storm)"]
+```d2 title="Nguyên nhân phổ biến"
+direction: down
+NP: "🔊 Noisy Neighbor Problem"
+CPU: "CPU Hogging"
+MEM: "Memory Pressure"
+IO: "I/O Saturation"
+DB: "DB Connection Exhaustion"
+NET: "Network Bandwidth"
+Q: "Queue Flooding"
+CPU1: "Tenant chạy heavy computation\n(ML inference, report gen)"
+MEM1: "Tenant load dataset lớn vào memory\n(cache abuse, large payloads)"
+IO1: "Tenant bulk insert/export\n(full table scan, mass upload)"
+DB1: "Tenant mở quá nhiều connections\n(connection leak, long transactions)"
+NET1: "Tenant transfer file lớn\n(video upload, data export)"
+Q1: "Tenant flood message queue\n(batch job, webhook storm)"
+NP -> CPU
+NP -> MEM
+NP -> IO
+NP -> DB
+NP -> NET
+NP -> Q
+CPU -> CPU1
+MEM -> MEM1
+IO -> IO1
+DB -> DB1
+NET -> NET1
+Q -> Q1
 ```
 
 #### Bảng nguyên nhân — tác động — ví dụ thực tế
@@ -62,32 +68,25 @@ graph TD
 
 #### Tác động theo cascade
 
-```
-Tenant A sends heavy query
-    │
-    ▼
-1. DB connection pool: 50/50 used by Tenant A
-    │
-    ▼
-2. Tenant B, C, D: connection timeout (no available connections)
-    │
-    ▼
-3. API response time: 200ms → 5000ms → timeout (30s)
-    │
-    ▼
-4. Health check fails → pod restart
-    │
-    ▼
-5. During restart: ALL tenants get 503 errors
-    │
-    ▼
-6. Auto-scaler kicks in (1-2 min delay)
-    │
-    ▼
-7. New pods start but DB still saturated by Tenant A
-    │
-    ▼
-8. Cascading failure: entire service degraded for 5-15 minutes
+```d2 title="Cascade: scale pod không giải quyết DB pool bị chiếm"
+direction: down
+n0: "Tenant A chạy heavy query"
+n1: "Tenant A dùng 50/50 DB connections"
+n2: "Tenants B, C, D: connection timeout"
+n3: "API: 200 → 5000 ms → timeout 30s"
+n4: "Health check fail → pod restart"
+n5: "Mọi tenant nhận 503 khi restart"
+n6: "Auto-scaler phản ứng sau 1–2 phút"
+n7: "Pods mới vẫn bị DB saturation"
+n8: "Toàn dịch vụ suy giảm 5–15 phút"
+n0 -> n1
+n1 -> n2
+n2 -> n3
+n3 -> n4
+n4 -> n5
+n5 -> n6
+n6 -> n7
+n7 -> n8
 ```
 
 ## Detection & Monitoring
@@ -128,7 +127,7 @@ Phát hiện noisy neighbor **sớm** là chìa khóa — trước khi nó ảnh
 
 #### Implementation — Per-Tenant Metrics (Micrometer / Prometheus)
 
-```java
+```java source="noisy-neighbor" file="src/metrics/TenantMetricsRecorder.java"
 @Component
 public class TenantMetricsRecorder {
 
@@ -286,32 +285,23 @@ groups:
 
 #### ① Bulkhead Pattern — Thread Pool Isolation
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│              BULKHEAD PATTERN                                │
-│                                                              │
-│  TRƯỚC (Shared Thread Pool):                                 │
-│  ┌────────────────────────────────────────────────────┐      │
-│  │  Thread Pool: 200 threads (shared)                 │      │
-│  │  Tenant A flood → 190 threads                      │      │
-│  │  Tenant B, C, D, E → fight for 10 threads          │      │
-│  └────────────────────────────────────────────────────┘      │
-│                                                              │
-│  SAU (Isolated Thread Pools):                                │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐        │
-│  │ Premium  │ │ Standard │ │ Free     │ │ Internal  │        │
-│  │ Pool: 80 │ │ Pool: 60 │ │ Pool: 40 │ │ Pool: 20  │        │
-│  │          │ │          │ │          │ │           │        │
-│  │ acme     │ │ beta     │ │ free-xyz │ │ health    │        │
-│  │enterprise│ │ gamma    │ │ free-abc │ │ metrics   │        │
-│  └──────────┘ └──────────┘ └──────────┘ └───────────┘        │
-│                                                              │
-│  Tenant A flood → chỉ exhaust Premium Pool                   │
-│  Tenant B, C, D vẫn có 60 threads available                  │
-└──────────────────────────────────────────────────────────────┘
+```d2 title="Bulkhead: tách thread pool theo tier"
+direction: down
+before: "Trước — Shared Thread Pool" {
+  pool: "200 threads\nTenant A chiếm 190\nTenants B–E tranh 10 threads"
+}
+after: "Sau — Isolated Thread Pools" {
+  premium: "Premium: 80 threads\nacme / Enterprise"
+  standard: "Standard: 60 threads\nbeta, gamma"
+  free: "Free: 40 threads\nfree-xyz, free-abc"
+  internal: "Internal: 20 threads\nhealth, metrics"
+}
+before -> after: Bulkhead
+impact: "Tenant A chỉ làm đầy Premium pool\nStandard vẫn giữ 60 threads"
+after -> impact
 ```
 
-```java
+```java source="noisy-neighbor" file="src/isolation/TenantBulkheadConfig.java"
 // Resilience4j Bulkhead per tenant tier
 @Configuration
 public class TenantBulkheadConfig {
@@ -361,7 +351,7 @@ public class OrderService {
 
 #### ② Circuit Breaker per Tenant
 
-```java
+```java source="noisy-neighbor" file="src/isolation/TenantCircuitBreakerManager.java"
 // Circuit breaker per tenant — isolate failures
 @Component
 public class TenantCircuitBreakerManager {
@@ -402,26 +392,21 @@ public class TenantCircuitBreakerManager {
 }
 ```
 
-```
-Circuit Breaker States per Tenant:
-
-  Tenant A: ● CLOSED  (healthy — requests pass through)
-  Tenant B: ● CLOSED  (healthy)
-  Tenant C: ◐ HALF-OPEN (testing — 5 probe requests)
-  Tenant D: ○ OPEN   (unhealthy — all requests rejected with 429)
-
-  Khi Tenant D fail rate >50%:
-  CLOSED → OPEN (reject tất cả request Tenant D)
-  → 30s sau → HALF-OPEN (cho 5 request thử)
-  → Thành công → CLOSED (recovery)
-  → Thất bại → OPEN (tiếp tục reject)
-
-  ⚡ Chỉ ảnh hưởng Tenant D, không ảnh hưởng A, B, C
+```d2 title="Circuit breaker độc lập theo tenant"
+direction: right
+closed: "CLOSED\nRequest đi qua"
+open: "OPEN\nReject với 429"
+half: "HALF-OPEN\n5 probe requests"
+closed -> open: "Fail rate > 50%"
+open -> half: Sau 30 giây
+half -> closed: Probe thành công
+half -> open: Probe thất bại
+others: "Mỗi tenant có state riêng\nA, B: CLOSED · C: HALF-OPEN · D: OPEN\nLỗi D không đổi trạng thái A, B, C"
 ```
 
 #### ③ Connection Pool per Tenant (Database)
 
-```java
+```java source="noisy-neighbor" file="src/db/TenantConnectionPoolManager.java"
 @Component
 public class TenantConnectionPoolManager {
 
@@ -462,27 +447,20 @@ public class TenantConnectionPoolManager {
 }
 ```
 
-```
-Connection Pool Isolation:
-
-┌──────────────────────────────────────────────────────┐
-│  Total DB connections: 100                           │
-│                                                      │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐   │
-│  │ Acme     │ │ Beta     │ │ Gamma    │ │ Reserve│   │
-│  │ (ent)    │ │ (pro)    │ │ (free)   │ │        │   │
-│  │ max: 20  │ │ max: 10  │ │ max: 3   │ │ 20     │   │
-│  │ used: 15 │ │ used: 4  │ │ used: 2  │ │ (burst)│   │
-│  └──────────┘ └──────────┘ └──────────┘ └────────┘   │
-│                                                      │
-│  Acme heavy query → exhausts 20 connections          │
-│  Beta và Gamma: KHÔNG bị ảnh hưởng                   │
-└──────────────────────────────────────────────────────┘
+```d2 title="Giới hạn connection theo tenant"
+direction: right
+pool: "Tổng ngân sách: 100 DB connections\nCác hạn mức minh họa không phân bổ hết ngân sách" {
+  acme: "Acme · Enterprise\nMax 20 / Used 15"
+  beta: "Beta · Pro\nMax 10 / Used 4"
+  gamma: "Gamma · Free\nMax 3 / Used 2"
+  reserve: "Reserve: 20\nBurst capacity"
+}
+note: "Acme làm đầy 20 connections của mình\nKhông chiếm hạn mức của Beta và Gamma"
 ```
 
 #### ④ Query Timeout + Row Limit per Tenant
 
-```java
+```java source="noisy-neighbor" file="src/db/TenantQueryGuard.java"
 @Component
 public class TenantQueryGuard {
 
@@ -580,7 +558,7 @@ Rate limiting là **tuyến phòng thủ đầu tiên** chống noisy neighbor �
 
 #### Implementation — Distributed Rate Limiter (Redis)
 
-```java
+```java source="noisy-neighbor" file="src/limits/TenantRateLimiter.java"
 @Component
 public class TenantRateLimiter {
 
@@ -652,7 +630,7 @@ public record RateLimitResult(
 
 #### Rate Limit Response Headers
 
-```java
+```java source="noisy-neighbor" file="src/web/RateLimitResponseFilter.java"
 @Component
 public class RateLimitResponseFilter implements Filter {
 
@@ -760,7 +738,7 @@ Resource Quotas giới hạn **tổng tài nguyên** mà tenant có thể sử d
 
 #### Implementation — Quota Service
 
-```java
+```java source="noisy-neighbor" file="src/limits/TenantQuotaService.java"
 @Service
 public class TenantQuotaService {
 
@@ -860,30 +838,21 @@ public UploadResponse uploadFile(@RequestParam MultipartFile file) {
 
 #### Fair Scheduling — Weighted Fair Queue
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│              WEIGHTED FAIR QUEUE                             │
-│                                                              │
-│  Incoming requests → Priority Queue → Worker Pool            │
-│                                                              │
-│  ┌─────────────────────────────────────────┐                 │
-│  │  Priority Queue (weighted):             │                 │
-│  │                                         │                 │
-│  │  Enterprise (weight: 5)  ██████████████ │                 │
-│  │  Pro        (weight: 3)  ████████       │                 │
-│  │  Free       (weight: 1)  ███            │                 │
-│  └─────────────────────────────────────────┘                 │
-│                                                              │
-│  Processing order:                                           │
-│  E, E, E, E, E, P, P, P, F, E, E, E, E, E, P, P, P, F...     │
-│                                                              │
-│  Enterprise gets 5/(5+3+1) = 55% of processing capacity      │
-│  Pro gets       3/(5+3+1) = 33% of processing capacity       │
-│  Free gets      1/(5+3+1) = 11% of processing capacity       │
-└──────────────────────────────────────────────────────────────┘
+```d2 title="Weighted fair queue phân bổ năng lực xử lý"
+direction: right
+request: Incoming requests
+queue: Weighted Priority Queue {
+  enterprise: "Enterprise · weight 5\n5/9 ≈ 55,6%"
+  pro: "Pro · weight 3\n3/9 ≈ 33,3%"
+  free: "Free · weight 1\n1/9 ≈ 11,1%"
+}
+workers: Worker Pool
+request -> queue -> workers
+order: "Chu kỳ minh họa\nE, E, E, E, E, P, P, P, F"
+queue -> order
 ```
 
-```java
+```java source="noisy-neighbor" file="src/queue/TenantFairScheduler.java"
 @Component
 public class TenantFairScheduler {
 

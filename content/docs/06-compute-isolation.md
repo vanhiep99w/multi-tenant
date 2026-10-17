@@ -7,22 +7,17 @@ description: "Shared vs Dedicated compute, Kubernetes multi-tenancy (Namespace, 
 
 Compute isolation quyết định **cách các tenant chia sẻ (hoặc không chia sẻ) tài nguyên xử lý** — CPU, memory, network, storage. Đây là yếu tố ảnh hưởng trực tiếp đến **chi phí, hiệu năng, bảo mật** của hệ thống.
 
+```d2 title="Phổ cách ly compute"
+direction: right
+n0: "Pool — Shared Everything\nChung pods, DB, cache\nRẻ nhất / Cách ly thấp nhất"
+n1: "Bridge — Mixed\nShared compute, DB riêng\nCache theo tenant, rate limits\nCân bằng chi phí và cách ly"
+n2: "Silo — Dedicated Everything\nCluster, DB, VPC riêng\nĐắt nhất / Cách ly cao nhất"
+n0 -> n1
+n1 -> n2
 ```
-              COMPUTE ISOLATION SPECTRUM
 
-  Shared Everything              Mixed                Dedicated Everything
-  (Pool)                         (Bridge)             (Silo)
-  ◄──────────────────────────────────────────────────────────►
-
-  ┌────────────────┐    ┌──────────────────┐    ┌────────────────┐
-  │ All tenants    │    │ Shared compute   │    │ Each tenant    │
-  │ same pods      │    │ Dedicated DB     │    │ own cluster    │
-  │ same DB        │    │ Per-tenant cache │    │ own DB         │
-  │ same cache     │    │ Rate limits      │    │ own VPC        │
-  └────────────────┘    └──────────────────┘    └────────────────┘
-  💰 Cheapest           💰 Balanced              💰 Most expensive
-  🔒 Least isolated     🔒 Reasonable            🔒 Most isolated
-```
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
 
 ## Shared Compute (Pool)
 
@@ -30,31 +25,22 @@ Tất cả tenant chạy trên **cùng compute resources** — cùng pods/contai
 
 #### Kiến trúc
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    SHARED COMPUTE                            │
-│                                                              │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │              Shared Kubernetes Cluster                 │  │
-│  │                                                        │  │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │  │
-│  │  │  Pod 1   │ │  Pod 2   │ │  Pod 3   │ │  Pod N   │   │  │
-│  │  │ order-svc│ │ order-svc│ │ user-svc │ │ user-svc │   │  │
-│  │  │          │ │          │ │          │ │          │   │  │
-│  │  │ Handles: │ │ Handles: │ │ Handles: │ │ Handles: │   │  │
-│  │  │ Tenant A │ │ Tenant C │ │ Tenant A │ │ Tenant B │   │  │
-│  │  │ Tenant B │ │ Tenant D │ │ Tenant B │ │ Tenant C │   │  │
-│  │  │ Tenant E │ │ Tenant F │ │ Tenant D │ │ Tenant D │   │  │
-│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘   │  │
-│  │                                                        │  │
-│  │  Load Balancer routes theo availability, KHÔNG theo    │  │
-│  │  tenant — bất kỳ pod nào cũng handle bất kỳ tenant     │  │
-│  └────────────────────────────────────────────────────────┘  │
-│                                                              │
-│  ✅ Max resource utilization                                 │
-│  ❌ Noisy neighbor risk cao nhất                             │
-│  ❌ Tenant A heavy query → ảnh hưởng tất cả tenant khác      │
-└──────────────────────────────────────────────────────────────┘
+```d2 title="Shared compute: mọi pod có thể phục vụ mọi tenant"
+direction: down
+lb: "Load Balancer\nTheo availability, không theo tenant"
+cluster: Shared Kubernetes Cluster {
+  p1: "Pod 1 · order-svc\nTenants A, B, E"
+  p2: "Pod 2 · order-svc\nTenants C, D, F"
+  p3: "Pod 3 · user-svc\nTenants A, B, D"
+  pn: "Pod N · user-svc\nTenants B, C, D"
+}
+lb -> cluster.p1
+lb -> cluster.p2
+lb -> cluster.p3
+lb -> cluster.pn
+risk: "Tận dụng tài nguyên tối đa\nNoisy Neighbor có thể ảnh hưởng mọi tenant"
+cluster -> risk
+cluster.icon: ../assets/d2/icons/kubernetes.svg
 ```
 
 #### Kỹ thuật cải thiện isolation trong Pool
@@ -85,32 +71,19 @@ Mỗi tenant (hoặc nhóm tenant) có **compute resources riêng biệt** — d
 
 #### Kiến trúc
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   DEDICATED COMPUTE                         │
-│                                                             │
-│  ┌──────────────────┐  ┌──────────────────┐                 │
-│  │   Tenant A       │  │   Tenant B       │                 │
-│  │   (Enterprise)   │  │   (Enterprise)   │                 │
-│  │                  │  │                  │                 │
-│  │  ┌────┐ ┌────┐   │  │  ┌────┐ ┌────┐   │  . . .          │
-│  │  │Pod │ │Pod │   │  │  │Pod │ │Pod │   │                 │
-│  │  │ A1 │ │ A2 │   │  │  │ B1 │ │ B2 │   │                 │
-│  │  └────┘ └────┘   │  │  └────┘ └────┘   │                 │
-│  │                  │  │                  │                 │
-│  │  Node Pool: A    │  │  Node Pool: B    │                 │
-│  │  CPU: 8 cores    │  │  CPU: 16 cores   │                 │
-│  │  RAM: 32 GB      │  │  RAM: 64 GB      │                 │
-│  │                  │  │                  │                 │
-│  │  ┌──────────┐    │  │  ┌──────────┐    │                 │
-│  │  │ DB: A    │    │  │  │ DB: B    │    │                 │
-│  │  └──────────┘    │  │  └──────────┘    │                 │
-│  └──────────────────┘  └──────────────────┘                 │
-│                                                             │
-│  ✅ Zero noisy neighbor                                     │
-│  ✅ Custom scaling per tenant                               │
-│  ❌ Costly — resources idle khi tenant inactive             │
-└─────────────────────────────────────────────────────────────┘
+```d2 title="Dedicated compute theo tenant"
+direction: right
+a: "Tenant A · Enterprise\nNode Pool A · 8 CPU · 32 GB" {
+  p1: "Pod A1"
+  p2: "Pod A2"
+  db: "DB A" {shape: cylinder}
+}
+b: "Tenant B · Enterprise\nNode Pool B · 16 CPU · 64 GB" {
+  p1: "Pod B1"
+  p2: "Pod B2"
+  db: "DB B" {shape: cylinder}
+}
+note: "Scaling độc lập; giảm cạnh tranh compute giữa tenant\nChi phí cao khi tài nguyên nhàn rỗi"
 ```
 
 #### Các mức Dedicated
@@ -142,32 +115,26 @@ Kubernetes cung cấp nhiều cơ chế native cho multi-tenancy. Có **3 mô h�
 
 #### Tổng quan 3 mô hình K8s Multi-Tenancy
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│              KUBERNETES MULTI-TENANCY MODELS                    │
-│                                                                 │
-│  Model 1: Namespace        Model 2: vCluster      Model 3:      │
-│  per Tenant               per Tenant              Cluster per   │
-│                                                    Tenant       │
-│  ┌─────────────────┐     ┌─────────────────┐     ┌───────────┐  │
-│  │  Shared Cluster │     │  Shared Cluster │     │ Cluster A │  │
-│  │                 │     │                 │     │           │  │
-│  │  ┌───┐ ┌───┐    │     │  ┌──────────┐   │     │ ┌────────┐│  │
-│  │  │ns │ │ns │    │     │  │ vCluster │   │     │ │Full K8s││  │
-│  │  │ A │ │ B │    │     │  │A (virtual│   │     │ │for A   ││  │
-│  │  └───┘ └───┘    │     │  │ control  │   │     │ └────────┘│  │
-│  │  ┌───┐ ┌───┐    │     │  │ plane)   │   │     └───────────┘  │
-│  │  │ns │ │ns │    │     │  └──────────┘   │     ┌───────────┐  │
-│  │  │ C │ │ D │    │     │  ┌──────────┐   │     │ Cluster B │  │
-│  │  └───┘ └───┘    │     │  │ vCluster │   │     │           │  │
-│  │                 │     │  │ B        │   │     │ ┌────────┐│  │
-│  └─────────────────┘     │  └──────────┘   │     │ │Full K8s││  │
-│                          └─────────────────┘     │ │for B   ││  │
-│  💰 Cheapest             💰 Medium               │ └────────┘│  │
-│  🔒 Soft isolation       🔒 Strong               └───────────┘  │
-│                                                  💰 Expensive   │
-│                                                  🔒 Full        │
-└─────────────────────────────────────────────────────────────────┘
+```d2 title="Ba mô hình Kubernetes Multi-Tenancy"
+direction: right
+namespace: "Namespace per Tenant\nRẻ / Soft isolation" {
+  cluster: "Shared Cluster" {
+    a: "Namespace A"
+    b: "Namespace B"
+    c: "Namespace C"
+    d: "Namespace D"
+  }
+}
+virtual: "vCluster per Tenant\nChi phí trung bình / Control plane riêng" {
+  cluster: "Shared Cluster" {
+    a: "vCluster A"
+    b: "vCluster B"
+  }
+}
+dedicated: "Cluster per Tenant\nĐắt / Cách ly mạnh" {
+  a: "Full Kubernetes Cluster A"
+  b: "Full Kubernetes Cluster B"
+}
 ```
 
 #### ① Namespace-per-Tenant
@@ -176,7 +143,7 @@ Mỗi tenant có **Kubernetes namespace riêng** với resource quotas, network 
 
 **Namespace + ResourceQuota:**
 
-```yaml
+```yaml source="compute-isolation" file="k8s/tenant-namespace.yaml"
 # namespace cho tenant
 apiVersion: v1
 kind: Namespace
@@ -221,7 +188,7 @@ spec:
 
 **Network Policy — Tenant isolation:**
 
-```yaml
+```yaml source="compute-isolation" file="k8s/network-policy.yaml"
 # Deny all traffic giữa các tenant namespaces
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -267,7 +234,7 @@ spec:
 
 **RBAC — Per-tenant access:**
 
-```yaml
+```yaml source="compute-isolation" file="k8s/tenant-rbac.yaml"
 # Role cho tenant admin
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -302,43 +269,50 @@ roleRef:
 
 **vCluster** tạo **virtual Kubernetes cluster** bên trong host cluster — mỗi tenant có control plane riêng (virtual API server, virtual scheduler) nhưng chia sẻ worker nodes.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                   HOST CLUSTER                          │
-│                                                         │
-│  ┌────────────────────┐  ┌────────────────────┐         │
-│  │ vCluster: Acme     │  │ vCluster: Beta     │         │
-│  │                    │  │                    │         │
-│  │ ┌──────────────┐   │  │ ┌──────────────┐   │         │
-│  │ │Virtual API   │   │  │ │Virtual API   │   │         │
-│  │ │Server + etcd │   │  │ │Server + etcd │   │         │
-│  │ └──────────────┘   │  │ └──────────────┘   │         │
-│  │                    │  │                    │         │
-│  │ Tenant thấy full   │  │ Tenant thấy full   │         │
-│  │ K8s cluster riêng  │  │ K8s cluster riêng  │         │
-│  │ • kubectl works    │  │ • kubectl works    │         │
-│  │ • CRDs riêng       │  │ • CRDs riêng       │         │
-│  │ • Namespaces riêng │  │ • Helm riêng       │         │
-│  └────────────────────┘  └────────────────────┘         │
-│                                                         │
-│  Workloads thực tế chạy trên shared worker nodes        │
-│  (synced từ vCluster xuống host cluster)                │
-└─────────────────────────────────────────────────────────┘
+```d2 title="vCluster: control plane riêng, worker nodes dùng chung"
+direction: down
+host: Host Cluster {
+  acme: "vCluster Acme\nAPI Server + etcd riêng\nkubectl, CRDs, namespaces riêng"
+  beta: "vCluster Beta\nAPI Server + etcd riêng\nkubectl, CRDs, Helm riêng"
+  nodes: Shared Worker Nodes
+  acme -> nodes: Sync workloads
+  beta -> nodes: Sync workloads
+}
 ```
 
-```bash
-# Tạo vCluster cho tenant
-vcluster create tenant-acme \
-  --namespace host-ns-acme \
-  --set syncer.extraArgs="{--enforce-node-selector}" \
-  --set isolation.enabled=true \
-  --set isolation.resourceQuota.enabled=true \
-  --set isolation.limitRange.enabled=true \
-  --set isolation.networkPolicy.enabled=true
+Các lệnh dưới đây là hướng dẫn thao tác, **không phải transcript đã chạy trên cluster thật**.
 
-# Tenant connect vào vCluster riêng
-vcluster connect tenant-acme --namespace host-ns-acme
-kubectl get pods  # Chỉ thấy pods của tenant mình
+```terminal-session
+title: Tạo và kết nối vCluster cho Acme
+description: Các lệnh minh họa, không được chạy bởi trang tài liệu. Cần cài CLI và kiểm tra quyền/context cluster.
+context:
+  kind: local
+  label: vcluster CLI + kubectl trên máy quản trị
+steps:
+- id: create
+  title: Tạo vCluster trên host cluster
+  command: |-
+    vcluster create tenant-acme \
+      --namespace host-ns-acme \
+      --set syncer.extraArgs="{--enforce-node-selector}" \
+      --set isolation.enabled=true \
+      --set isolation.resourceQuota.enabled=true \
+      --set isolation.limitRange.enabled=true \
+      --set isolation.networkPolicy.enabled=true
+  warning: Kiểm tra kubectl context và phiên bản vcluster trước khi tạo tài nguyên. Các --set phụ thuộc phiên bản chart.
+  expected: vCluster tenant-acme được provision trong namespace host-ns-acme.
+- id: connect
+  title: Chuyển context sang vCluster
+  command: vcluster connect tenant-acme --namespace host-ns-acme
+  warning: Lệnh có thể đổi kubectl context hiện tại; ghi lại context cũ trước khi kết nối.
+  expected: Kết nối vào API server ảo của tenant Acme.
+- id: pods
+  title: Kiểm tra phạm vi truy cập
+  command: kubectl get pods
+  context:
+    kind: local
+    label: kubectl context của vCluster tenant-acme
+  expected: Chỉ nhìn thấy pods trong phạm vi vCluster của tenant, không phải toàn bộ host cluster.
 ```
 
 #### So sánh các mô hình K8s Multi-Tenancy
@@ -361,54 +335,35 @@ Serverless (AWS Lambda, Azure Functions, Google Cloud Functions) mang lại **l�
 
 #### Serverless Multi-Tenancy Models
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│              SERVERLESS MULTI-TENANCY                            │
-│                                                                  │
-│  Model A: Shared Function          Model B: Function per Tenant  │
-│  (Pool)                            (Silo)                        │
-│                                                                  │
-│  ┌─────────────────────┐          ┌────────────────────────┐     │
-│  │  Lambda: order-svc  │          │ Lambda: order-svc-acme │     │
-│  │                     │          │ (only tenant acme)     │     │
-│  │  Handles ALL tenants│          └────────────────────────┘     │
-│  │  tenant_id from JWT │          ┌────────────────────────┐     │
-│  │                     │          │ Lambda: order-svc-beta │     │
-│  └─────────────────────┘          │ (only tenant beta)     │     │
-│                                   └────────────────────────┘     │
-│  ✅ Simple, cost-effective        ✅ Full isolation              │
-│  ❌ Noisy neighbor (cold start)   ❌ N functions to manage       │
-│  ❌ Shared concurrency limits     ❌ Higher cost                 │
-└──────────────────────────────────────────────────────────────────┘
+```d2 title="Serverless: shared function hay function riêng?"
+direction: right
+pool: "Shared Function (Pool)" {
+  order: "Lambda: order-svc\nMọi tenant · tenant_id từ JWT\nĐơn giản, tiết kiệm\nChung concurrency / cold start contention"
+}
+silo: "Function per Tenant (Silo)" {
+  acme: "Lambda: order-svc-acme\nChỉ tenant acme"
+  beta: "Lambda: order-svc-beta\nChỉ tenant beta"
+  cost: "Cách ly theo function\nN functions, chi phí quản lý cao"
+}
+pool.order.icon: ../assets/d2/icons/aws-lambda.svg
+silo.acme.icon: ../assets/d2/icons/aws-lambda.svg
+silo.beta.icon: ../assets/d2/icons/aws-lambda.svg
 ```
 
 #### AWS Lambda — Isolation Techniques
 
 **① Shared Function + Reserved Concurrency per Tenant:**
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  AWS Lambda Concurrency Management                      │
-│                                                         │
-│  Account limit: 1000 concurrent executions              │
-│                                                         │
-│  ┌──────────────────────────────────────────┐           │
-│  │ order-svc (shared, all tenants)          │           │
-│  │ Reserved concurrency: 500                │           │
-│  │                                          │           │
-│  │Per-tenant throttling (application-level):│           │
-│  │   Free tier:       10 concurrent         │           │
-│  │   Pro tier:        50 concurrent         │           │
-│  │   Enterprise tier: 200 concurrent        │           │
-│  └──────────────────────────────────────────┘           │
-│                                                         │
-│  ┌──────────────────────────────────────────┐           │
-│  │ order-svc-enterprise-acme (dedicated)    │           │
-│  │ Reserved concurrency: 200                │           │
-│  │ Provisioned concurrency: 50 (no cold     │           │
-│  │                            start)        │           │
-│  └──────────────────────────────────────────┘           │
-└─────────────────────────────────────────────────────────┘
+```d2 title="Lambda: giới hạn account, function và tenant"
+direction: down
+account: "Account limit: 1000 concurrent executions" {
+  shared: "order-svc · Shared\nReserved concurrency: 500" {
+    free: "Free: 10 concurrent / tenant"
+    pro: "Pro: 50 concurrent / tenant"
+    ent: "Enterprise: 200 concurrent / tenant"
+  }
+  dedicated: "order-svc-enterprise-acme\nReserved concurrency: 200\nProvisioned concurrency: 50"
+}
 ```
 
 **② IAM Role per Tenant (Security boundary):**
@@ -478,87 +433,70 @@ Network isolation đảm bảo **traffic của tenant A không thể reach tài 
 
 #### Các mức Network Isolation
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│              NETWORK ISOLATION LEVELS                            │
-│                                                                  │
-│  Level 1: Security Groups       Level 2: Subnet/VPC Isolation    │
-│  (Weakest — cùng VPC)           (Stronger)                       │
-│                                                                  │
-│  ┌─────────────────────┐       ┌────────────────────────────┐    │
-│  │  VPC: Shared        │       │  VPC: tenant-acme          │    │
-│  │                     │       │  CIDR: 10.1.0.0/16         │    │
-│  │  SG-A: tenant-acme  │       │  ┌──────────────────┐      │    │
-│  │  SG-B: tenant-beta  │       │  │ Private Subnet   │      │    │
-│  │                     │       │  │ 10.1.1.0/24      │      │    │
-│  │  SG rules:          │       │  └──────────────────┘      │    │
-│  │  A → A only         │       └────────────────────────────┘    │
-│  │  B → B only         │       ┌────────────────────────────┐    │
-│  └─────────────────────┘       │  VPC: tenant-beta          │    │
-│                                │  CIDR: 10.2.0.0/16         │    │
-│  Level 3: VPC + PrivateLink    │  ┌──────────────────┐      │    │
-│  (Strongest)                   │  │ Private Subnet   │      │    │
-│                                │  └──────────────────┘      │    │
-│  Tenant VPC ◄── PrivateLink    └────────────────────────────┘    │
-│       ──► Shared Service VPC                                     │
-│  (No internet, no VPC Peering)                                   │
-└──────────────────────────────────────────────────────────────────┘
+```d2 title="Các mức cách ly network"
+direction: right
+sg: "① Shared VPC — Security Groups\nCách ly yếu hơn" {
+  a: "SG-A: chỉ A → A"
+  b: "SG-B: chỉ B → B"
+}
+vpc: "② VPC riêng — Cách ly mạnh hơn" {
+  a: "tenant-acme · 10.1.0.0/16\nPrivate subnet: 10.1.1.0/24"
+  b: "tenant-beta · 10.2.0.0/16\nPrivate subnet"
+}
+private: "③ VPC + PrivateLink" {
+  tenant: "Tenant VPC"
+  shared: "Shared Service VPC\nKhông Internet / Không peering"
+  tenant -> shared: PrivateLink
+}
 ```
 
 #### ① Security Groups (Cùng VPC, phân tách bằng SG rules)
 
-```
-┌─────────────────────────────────────────────────┐
-│  Shared VPC: 10.0.0.0/16                        │
-│                                                 │
-│  ┌────────────────┐  ┌────────────────┐         │
-│  │ SG: tenant-acme│  │ SG: tenant-beta│         │
-│  │                │  │                │         │
-│  │ Inbound:       │  │ Inbound:       │         │
-│  │  - Self (acme) │  │  - Self (beta) │         │
-│  │  - ALB SG      │  │  - ALB SG      │         │
-│  │                │  │                │         │
-│  │ Outbound:      │  │ Outbound:      │         │
-│  │  - Shared DB SG│  │  - Shared DB SG│         │
-│  │  - NAT GW      │  │  - NAT GW      │         │
-│  └────────────────┘  └────────────────┘         │
-│                                                 │
-│  ⚠️ Weak isolation: cùng VPC, chỉ SG rules      │
-│  ✅ Simple, cost-effective                      │
-└─────────────────────────────────────────────────┘
+```d2 title="Cùng VPC, phân tách bằng Security Group rules"
+direction: down
+vpc: "Shared VPC: 10.0.0.0/16" {
+  alb: ALB Security Group
+  acme: "SG: tenant-acme\nInbound: self + ALB SG"
+  beta: "SG: tenant-beta\nInbound: self + ALB SG"
+  db: Shared DB Security Group
+  nat: NAT Gateway
+  alb -> acme
+  alb -> beta
+  acme -> db
+  beta -> db
+  acme -> nat
+  beta -> nat
+}
 ```
 
 #### ② VPC per Tenant + Shared Services via PrivateLink
 
-```mermaid
-graph TB
-    subgraph "Tenant A VPC (10.1.0.0/16)"
-        A_App[App Pods]
-        A_EP[VPC Endpoint]
-    end
-
-    subgraph "Tenant B VPC (10.2.0.0/16)"
-        B_App[App Pods]
-        B_EP[VPC Endpoint]
-    end
-
-    subgraph "Shared Services VPC (10.0.0.0/16)"
-        NLB[Network Load Balancer]
-        DB[(Shared Database)]
-        Cache[(Shared Cache)]
-        PLS[PrivateLink Service]
-    end
-
-    A_EP -->|PrivateLink| PLS
-    B_EP -->|PrivateLink| PLS
-    PLS --> NLB
-    NLB --> DB
-    NLB --> Cache
+```d2 title="② VPC per Tenant + Shared Services via PrivateLink"
+direction: down
+group1: "Tenant A VPC (10.1.0.0/16)" {
+  A_App: "App Pods"
+  A_EP: "VPC Endpoint"
+}
+group2: "Tenant B VPC (10.2.0.0/16)" {
+  B_App: "App Pods"
+  B_EP: "VPC Endpoint"
+}
+group3: "Shared Services VPC (10.0.0.0/16)" {
+  NLB: "Network Load Balancer"
+  DB: "Shared Database" {shape: cylinder}
+  Cache: "Shared Cache" {shape: cylinder}
+  PLS: "PrivateLink Service"
+}
+group1.A_EP -> group3.PLS: "PrivateLink"
+group2.B_EP -> group3.PLS: "PrivateLink"
+group3.PLS -> group3.NLB
+group3.NLB -> group3.DB
+group3.NLB -> group3.Cache
 ```
 
 **Terraform — VPC per Tenant:**
 
-```hcl
+```hcl source="compute-isolation" file="terraform/tenant-vpc.tf"
 # Module: per-tenant VPC
 module "tenant_vpc" {
   source   = "./modules/tenant-vpc"

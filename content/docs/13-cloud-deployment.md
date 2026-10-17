@@ -29,68 +29,121 @@ Mỗi cloud provider có các managed service riêng hỗ trợ multi-tenancy. S
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
+
 ## AWS Multi-Tenant Patterns
 
 AWS là cloud phổ biến nhất cho SaaS multi-tenant — có **SaaS Lens** trong Well-Architected Framework.
 
 #### AWS Reference Architecture
 
-```mermaid
-graph TD
-    subgraph "Edge Layer"
-        CF[CloudFront CDN]
-        WAF[AWS WAF]
-        R53[Route 53]
-    end
+Sơ đồ mở ở mức tổng quan để dễ đọc. Chọn **Explore** rồi node **EKS** (hoặc chọn board `topology`) để xem toàn bộ thành phần và kết nối.
 
-    subgraph "API Layer"
-        APIGW[API Gateway<br/>+ Lambda Authorizer]
-        COGNITO[Cognito<br/>User Pool per tenant]
-    end
-
-    subgraph "Compute Layer — EKS"
-        NS_SHARED[Namespace: shared-pool<br/>Free + Pro tenants]
-        NS_ENT1[Namespace: tenant-acme<br/>Enterprise]
-        NS_ENT2[Namespace: tenant-beta<br/>Enterprise]
-    end
-
-    subgraph "Data Layer"
-        RDS_SHARED[RDS Aurora<br/>Shared DB — Pool]
-        RDS_ENT[RDS Aurora<br/>Dedicated — Silo]
-        REDIS_SHARED[ElastiCache Redis<br/>Shared Cluster]
-        REDIS_ENT[ElastiCache Redis<br/>Dedicated]
-        S3[S3 Buckets<br/>per-tenant prefix]
-    end
-
-    subgraph "Async Layer"
-        SQS[SQS Queues<br/>per-tenant or shared]
-        SNS[SNS Topics]
-        KINESIS[Kinesis Data Streams<br/>Audit Logs]
-    end
-
-    subgraph "Observability"
-        CW[CloudWatch<br/>Logs + Metrics]
-        XRAY[X-Ray Tracing]
-        OS[OpenSearch<br/>per-tenant index]
-    end
-
-    R53 --> CF --> WAF --> APIGW
-    APIGW --> COGNITO
-    APIGW --> NS_SHARED
-    APIGW --> NS_ENT1
-    APIGW --> NS_ENT2
-    NS_SHARED --> RDS_SHARED
-    NS_SHARED --> REDIS_SHARED
-    NS_ENT1 --> RDS_ENT
-    NS_ENT1 --> REDIS_ENT
-    NS_SHARED --> SQS
-    SQS --> SNS
-    NS_SHARED --> CW
+```d2 mode=explorer title="AWS Reference Architecture"
+direction: down
+edge: "Edge\nRoute 53 / CloudFront / WAF" {
+  icon: ../assets/d2/icons/aws-cloudfront.svg
+}
+api: "API Gateway\nLambda Authorizer" {
+  icon: ../assets/d2/icons/aws-api-gateway.svg
+}
+identity: "Cognito\nUser Pool theo tenant" {
+  icon: ../assets/d2/icons/aws-cognito.svg
+}
+compute: "EKS\nShared Pool / Enterprise Silo" {
+  icon: ../assets/d2/icons/aws-eks.svg
+  link: layers.topology
+  tooltip: "Xem topology đầy đủ và các namespace"
+}
+data: "Data\nAurora / ElastiCache / S3" {
+  icon: ../assets/d2/icons/aws-aurora.svg
+}
+async: "Async\nSQS / SNS / Kinesis" {
+  icon: ../assets/d2/icons/aws-sqs.svg
+}
+observe: "Observability\nCloudWatch / X-Ray / OpenSearch" {
+  icon: ../assets/d2/icons/aws-cloudwatch.svg
+}
+edge -> api
+api -> identity
+api -> compute
+compute -> data
+compute -> async
+compute -> observe
+layers: {
+  topology: {
+    direction: down
+    group1: "Edge Layer" {
+      CF: "CloudFront CDN"
+      WAF: "AWS WAF"
+      R53: "Route 53"
+    }
+    group2: "API Layer" {
+      APIGW: "API Gateway\n+ Lambda Authorizer"
+      COGNITO: "Cognito\nUser Pool per tenant"
+    }
+    group3: "Compute Layer — EKS" {
+      NS_SHARED: "Namespace: shared-pool\nFree + Pro tenants"
+      NS_ENT1: "Namespace: tenant-acme\nEnterprise"
+      NS_ENT2: "Namespace: tenant-beta\nEnterprise"
+    }
+    group4: "Data Layer" {
+      RDS_SHARED: "RDS Aurora\nShared DB — Pool"
+      RDS_ENT: "RDS Aurora\nDedicated — Silo"
+      REDIS_SHARED: "ElastiCache Redis\nShared Cluster"
+      REDIS_ENT: "ElastiCache Redis\nDedicated"
+      S3: "S3 Buckets\nper-tenant prefix"
+    }
+    group5: "Async Layer" {
+      SQS: "SQS Queues\nper-tenant or shared"
+      SNS: "SNS Topics"
+      KINESIS: "Kinesis Data Streams\nAudit Logs"
+    }
+    group6: "Observability" {
+      CW: "CloudWatch\nLogs + Metrics"
+      XRAY: "X-Ray Tracing"
+      OS: "OpenSearch\nper-tenant index"
+    }
+    group1.R53 -> group1.CF
+    group1.CF -> group1.WAF
+    group1.WAF -> group2.APIGW
+    group2.APIGW -> group2.COGNITO
+    group2.APIGW -> group3.NS_SHARED
+    group2.APIGW -> group3.NS_ENT1
+    group2.APIGW -> group3.NS_ENT2
+    group3.NS_SHARED -> group4.RDS_SHARED
+    group3.NS_SHARED -> group4.REDIS_SHARED
+    group3.NS_ENT1 -> group4.RDS_ENT
+    group3.NS_ENT1 -> group4.REDIS_ENT
+    group3.NS_SHARED -> group5.SQS
+    group5.SQS -> group5.SNS
+    group3.NS_SHARED -> group6.CW
+    group1.CF.icon: ../assets/d2/icons/aws-cloudfront.svg
+    group1.WAF.icon: ../assets/d2/icons/aws-waf.svg
+    group1.R53.icon: ../assets/d2/icons/aws-route53.svg
+    group2.APIGW.icon: ../assets/d2/icons/aws-api-gateway.svg
+    group2.COGNITO.icon: ../assets/d2/icons/aws-cognito.svg
+    group3.NS_SHARED.icon: ../assets/d2/icons/aws-eks.svg
+    group3.NS_ENT1.icon: ../assets/d2/icons/aws-eks.svg
+    group3.NS_ENT2.icon: ../assets/d2/icons/aws-eks.svg
+    group4.RDS_SHARED.icon: ../assets/d2/icons/aws-aurora.svg
+    group4.RDS_ENT.icon: ../assets/d2/icons/aws-aurora.svg
+    group4.REDIS_SHARED.icon: ../assets/d2/icons/aws-elasticache.svg
+    group4.REDIS_ENT.icon: ../assets/d2/icons/aws-elasticache.svg
+    group4.S3.icon: ../assets/d2/icons/aws-s3.svg
+    group5.SQS.icon: ../assets/d2/icons/aws-sqs.svg
+    group5.SNS.icon: ../assets/d2/icons/aws-sns.svg
+    group5.KINESIS.icon: ../assets/d2/icons/aws-kinesis.svg
+    group6.CW.icon: ../assets/d2/icons/aws-cloudwatch.svg
+    group6.XRAY.icon: ../assets/d2/icons/aws-xray.svg
+  }
+}
 ```
 
 #### Terraform — AWS Multi-Tenant Infrastructure
 
-```hcl
+```hcl source="cloud-deployment" file="terraform/aws/main.tf"
 # modules/tenant/main.tf
 # Module tạo infrastructure cho 1 tenant
 
@@ -231,47 +284,33 @@ Azure có hỗ trợ multi-tenancy tốt qua **Azure AD B2C** và **Elastic Pool
 
 #### Azure Reference Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│              AZURE MULTI-TENANT ARCHITECTURE                     │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────┐            │
-│  │  Front Door (CDN + WAF + Global LB)              │            │
-│  └─────────────────────┬────────────────────────────┘            │
-│                        ▼                                         │
-│  ┌──────────────────────────────────────────────────┐            │
-│  │  Azure API Management                            │            │
-│  │  ├── Rate limiting per tenant (subscription key) │            │
-│  │  ├── JWT validation → tenant_id extraction       │            │
-│  │  └── Routing: /tenant-a/* → backend-a            │            │
-│  └─────────────────────┬────────────────────────────┘            │
-│                        ▼                                         │
-│  ┌──────────────────────────────────────────────────┐            │
-│  │  AKS (Azure Kubernetes Service)                  │            │
-│  │  ├── Namespace: shared-pool                      │            │
-│  │  ├── Namespace: tenant-acme (dedicated)          │            │
-│  │  └── Pod Identity → Azure AD Managed Identity    │            │
-│  └─────────────────────┬────────────────────────────┘            │
-│                        ▼                                         │
-│  ┌─────────────────┐ ┌────────────────┐ ┌───────────────┐        │
-│  │ Azure SQL       │ │ Azure Cache    │ │ Blob Storage  │        │
-│  │ Elastic Pool    │ │ for Redis      │ │ per-tenant    │        │
-│  │ (shared)        │ │ (shared/silo)  │ │ container     │        │
-│  │                 │ │                │ │               │        │
-│  │ + Dedicated DB  │ │                │ │               │        │
-│  │ (enterprise)    │ │                │ │               │        │
-│  └─────────────────┘ └────────────────┘ └───────────────┘        │
-│                                                                  │
-│  Identity: Azure AD B2C (tenant per org)                         │
-│  Secrets: Azure Key Vault (per-tenant keys)                      │
-│  Monitoring: Azure Monitor + App Insights                        │
-│  Messaging: Azure Service Bus (per-tenant queues)                │
-└──────────────────────────────────────────────────────────────────┘
+```d2 title="Kiến trúc Multi-Tenant trên Azure"
+direction: down
+edge: Front Door — CDN / WAF / Global LB
+api: "Azure API Management\nRate limit theo subscription key\nValidate JWT → tenant_id\nRouting theo tenant"
+aks: AKS {
+  shared: Namespace shared-pool
+  acme: Namespace tenant-acme
+  identity: Pod Identity / Managed Identity
+}
+sql: "Azure SQL\nElastic Pool + Dedicated DB cho Enterprise" {shape: cylinder}
+redis: "Azure Cache for Redis\nShared / Silo"
+blob: "Blob Storage\nContainer theo tenant"
+support: "Azure AD B2C · Key Vault\nAzure Monitor + App Insights\nService Bus queues theo tenant"
+edge -> api -> aks
+aks -> sql
+aks -> redis
+aks -> blob
+edge.icon: ../assets/d2/icons/azure-front-door.svg
+api.icon: ../assets/d2/icons/azure-api-management.svg
+sql.icon: ../assets/d2/icons/azure-sql.svg
+blob.icon: ../assets/d2/icons/azure-storage.svg
+aks.icon: ../assets/d2/icons/azure-aks.svg
 ```
 
 #### Azure SQL Elastic Pool — Cost-Efficient Multi-Tenancy
 
-```json
+```jsonc source="cloud-deployment" file="azure/elastic-pool.jsonc"
 // Azure Resource Manager (ARM) template snippet
 {
   "type": "Microsoft.Sql/servers/elasticPools",
@@ -314,50 +353,36 @@ GCP mạnh về **data analytics** và **Kubernetes (GKE)** — phù hợp cho d
 
 #### GCP Reference Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│              GCP MULTI-TENANT ARCHITECTURE                       │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────┐            │
-│  │  Cloud CDN + Cloud Armor (WAF)                   │            │
-│  └─────────────────────┬────────────────────────────┘            │
-│                        ▼                                         │
-│  ┌──────────────────────────────────────────────────┐            │
-│  │  Apigee API Platform                             │            │
-│  │  ├── Developer portal per tenant                 │            │
-│  │  ├── API key / OAuth per tenant                  │            │
-│  │  └── Analytics per tenant                        │            │
-│  └─────────────────────┬────────────────────────────┘            │
-│                        ▼                                         │
-│  ┌──────────────────────────────────────────────────┐            │
-│  │  GKE (Google Kubernetes Engine)                  │            │
-│  │  ├── Namespace per tenant (Enterprise)           │            │
-│  │  ├── Workload Identity → GCP IAM                 │            │
-│  │  └── Config Connector for IaC                    │            │
-│  └─────────────────────┬────────────────────────────┘            │
-│                        ▼                                         │
-│  ┌─────────────────┐ ┌────────────────┐ ┌───────────────┐        │
-│  │ Cloud SQL /     │ │ Memorystore    │ │ Cloud Storage │        │
-│  │ AlloyDB /       │ │ (Redis)        │ │ per-tenant    │        │
-│  │ Spanner         │ │                │ │ bucket/prefix │        │
-│  │ (shared/silo)   │ │                │ │               │        │
-│  └─────────────────┘ └────────────────┘ └───────────────┘        │
-│                                                                  │
-│  ┌────────────────────────┐  ┌──────────────────────────┐        │
-│  │ BigQuery               │  │ Pub/Sub                  │        │
-│  │ ├── Dataset per tenant │  │ ├── Topic per tenant     │        │
-│  │ └── Analytics / BI     │  │ └── Subscription per svc │        │
-│  └────────────────────────┘  └──────────────────────────┘        │
-│                                                                  │
-│  Identity: Identity Platform (Firebase Auth)                     │
-│  Secrets: Secret Manager (per-tenant secrets)                    │
-│  Monitoring: Cloud Monitoring + Cloud Trace                      │
-└──────────────────────────────────────────────────────────────────┘
+```d2 title="Kiến trúc Multi-Tenant trên GCP"
+direction: down
+edge: Cloud CDN + Cloud Armor
+api: "Apigee\nDeveloper portal / API key / OAuth / Analytics theo tenant"
+gke: "GKE\nNamespace Enterprise theo tenant\nWorkload Identity → IAM\nConfig Connector"
+db: "Cloud SQL / AlloyDB / Spanner\nShared hoặc Silo" {shape: cylinder}
+cache: Memorystore Redis
+storage: Cloud Storage — bucket / prefix theo tenant
+analytics: BigQuery — dataset theo tenant
+queue: Pub/Sub — topic theo tenant / subscription theo service
+support: Identity Platform / Secret Manager / Cloud Monitoring + Trace
+edge -> api -> gke
+gke -> db
+gke -> cache
+gke -> storage
+gke -> analytics
+gke -> queue
+edge.icon: ../assets/d2/icons/gcp-cdn.svg
+api.icon: ../assets/d2/icons/gcp-apigee.svg
+db.icon: ../assets/d2/icons/gcp-sql.svg
+cache.icon: ../assets/d2/icons/gcp-memorystore.svg
+storage.icon: ../assets/d2/icons/gcp-storage.svg
+analytics.icon: ../assets/d2/icons/gcp-bigquery.svg
+queue.icon: ../assets/d2/icons/gcp-pubsub.svg
+gke.icon: ../assets/d2/icons/kubernetes.svg
 ```
 
 #### GCP — Cloud Spanner for Global Multi-Tenant
 
-```sql
+```sql source="cloud-deployment" file="gcp/spanner-schema.sql"
 -- Spanner: globally distributed with tenant-level isolation
 -- Interleaved tables for co-located tenant data
 

@@ -7,21 +7,26 @@ description: "Cross-tenant data leak prevention, encryption strategies (KMS per 
 
 Security trong multi-tenant là **mission-critical** — một lỗ hổng có thể **leak data giữa các tenant**, gây mất niềm tin và vi phạm pháp luật. Nguyên tắc: **Zero Trust between tenants** — mọi lớp đều phải enforce isolation.
 
+```d2 title="Defense in depth: tenant_id xuyên suốt các lớp"
+direction: down
+n0: "① Network\nFirewall / SG / VPC isolation"
+n1: "② Authentication\nJWT + tenant_id / SSO / SAML"
+n2: "③ Authorization\nRBAC scoped by tenant_id"
+n3: "④ Data Access\nRLS / Schema isolation"
+n4: "⑤ Encryption\nPer-tenant KMS keys / TLS"
+n5: "⑥ Audit\nPer-tenant immutable logs"
+n6: "⑦ Compliance\nGDPR / HIPAA / SOC2 theo tenant"
+n0 -> n1
+n1 -> n2
+n2 -> n3
+n3 -> n4
+n4 -> n5
+n5 -> n6
+n4.icon: ../assets/d2/icons/aws-kms.svg
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│              MULTI-TENANT SECURITY LAYERS                        │
-│                                                                  │
-│  Layer 1: Network          Firewall, SG, VPC isolation           │
-│  Layer 2: Authentication   JWT + tenant_id, SSO/SAML             │
-│  Layer 3: Authorization    RBAC scoped by tenant_id              │
-│  Layer 4: Data Access      Row-level security, schema isolation  │
-│  Layer 5: Encryption       Per-tenant keys (KMS), TLS            │
-│  Layer 6: Audit            Per-tenant audit log, immutable       │
-│  Layer 7: Compliance       GDPR, HIPAA, SOC2 — per tenant        │
-│                                                                  │
-│  ⚡ MỌI layer phải enforce tenant_id — không layer nào optional   │
-└──────────────────────────────────────────────────────────────────┘
-```
+
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
 
 ## Cross-Tenant Data Leak Prevention
 
@@ -29,23 +34,33 @@ Cross-tenant data leak (hay **tenant bleed**) là lỗi nghiêm trọng nhất t
 
 #### Nguyên nhân phổ biến
 
-```mermaid
-graph TD
-    LEAK[🔴 Cross-Tenant Data Leak]
-
-    LEAK --> Q[Missing tenant_id in query]
-    LEAK --> C[Cache key collision]
-    LEAK --> J[JWT forgery / spoofing]
-    LEAK --> L[Log exposure]
-    LEAK --> API[API endpoint no tenant check]
-    LEAK --> BUG[Logic bug: wrong context]
-
-    Q --> Q1["SELECT * FROM orders<br/>WHERE id = :orderId<br/>❌ Missing: AND tenant_id = :tid"]
-    C --> C1["Cache key: 'user:123'<br/>❌ Should be: 'tenant:acme:user:123'"]
-    J --> J1["Tenant A modifies JWT<br/>to set tenant_id = 'beta'"]
-    L --> L1["Logs contain PII from<br/>multiple tenants in same file"]
-    API --> API1["GET /api/orders/456<br/>No tenant_id verification"]
-    BUG --> BUG1["ThreadLocal not cleared<br/>after request → next request<br/>uses wrong tenant context"]
+```d2 title="Nguyên nhân phổ biến"
+direction: down
+LEAK: "🔴 Cross-Tenant Data Leak"
+Q: "Missing tenant_id in query"
+C: "Cache key collision"
+J: "JWT forgery / spoofing"
+L: "Log exposure"
+API: "API endpoint no tenant check"
+BUG: "Logic bug: wrong context"
+Q1: "SELECT * FROM orders\nWHERE id = :orderId\n❌ Missing: AND tenant_id = :tid"
+C1: "Cache key: 'user:123'\n❌ Should be: 'tenant:acme:user:123'"
+J1: "Tenant A modifies JWT\nto set tenant_id = 'beta'"
+L1: "Logs contain PII from\nmultiple tenants in same file"
+API1: "GET /api/orders/456\nNo tenant_id verification"
+BUG1: "ThreadLocal not cleared\nafter request → next request\nuses wrong tenant context"
+LEAK -> Q
+LEAK -> C
+LEAK -> J
+LEAK -> L
+LEAK -> API
+LEAK -> BUG
+Q -> Q1
+C -> C1
+J -> J1
+L -> L1
+API -> API1
+BUG -> BUG1
 ```
 
 #### Phòng chống — Database Layer
@@ -116,7 +131,7 @@ SET app.current_tenant = 'acme';
 
 #### Phòng chống — Cache Layer
 
-```java
+```java source="security-compliance" file="src/cache/TenantCacheKeyGenerator.java"
 /**
  * Tenant-safe cache key strategy
  * MỌI cache key PHẢI có tenant_id prefix
@@ -148,7 +163,7 @@ public List<Order> findOrders(String status) {
 
 #### Phòng chống — Context Propagation Safety
 
-```java
+```java source="security-compliance" file="src/security/TenantContextSafetyFilter.java"
 /**
  * Đảm bảo TenantContext LUÔN được clear sau mỗi request
  * Tránh context leak sang request tiếp theo
@@ -196,7 +211,7 @@ public class TenantAwareRunnable implements Runnable {
 
 #### Cross-Tenant Leak Testing
 
-```java
+```java source="security-compliance" file="src/test/TenantIsolationTest.java"
 /**
  * Integration test — verify tenant isolation
  */
@@ -258,40 +273,17 @@ public class TenantIsolationTest {
 
 #### Encryption at Rest — Per-Tenant Keys
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│              ENCRYPTION ARCHITECTURE                             │
-│                                                                  │
-│  ① Shared Platform Key (Free/Pro tier)                          │
-│  ┌──────────────────────────────────────────────────────┐        │
-│  │  AWS KMS: platform-master-key                        │        │
-│  │  ├── Encrypts ALL tenant data                        │        │
-│  │  ├── Key rotation: annual (automatic)                │        │
-│  │  └── Simple, cost-effective                          │        │
-│  └──────────────────────────────────────────────────────┘        │
-│                                                                  │
-│  ② Per-Tenant Key (Enterprise tier)                             │
-│  ┌──────────────────────────────────────────────────────┐        │
-│  │  AWS KMS: tenant-{id}-master-key                     │        │
-│  │  ├── Each tenant has dedicated CMK                   │        │
-│  │  ├── Tenant can manage own key policy                │        │
-│  │  ├── Independent key rotation                        │        │
-│  │  └── Crypto-erase: delete key = delete all data      │        │
-│  └──────────────────────────────────────────────────────┘        │
-│                                                                  │
-│  ③ BYOK — Bring Your Own Key (Enterprise+)                      │
-│  ┌──────────────────────────────────────────────────────┐        │
-│  │  Tenant provides their own KMS key                   │        │
-│  │  ├── Full tenant control over encryption             │        │
-│  │  ├── Tenant can revoke access anytime                │        │
-│  │  └── Required: HIPAA, financial compliance           │        │
-│  └──────────────────────────────────────────────────────┘        │
-└──────────────────────────────────────────────────────────────────┘
+```d2 title="Ba mô hình quản lý khóa mã hóa"
+direction: right
+platform: "Free/Pro\nplatform-master-key\nMã hóa mọi tenant\nRotation tự động hằng năm\nĐơn giản, tiết kiệm"
+tenant: "Enterprise\ntenant-{id}-master-key\nCMK riêng, key policy riêng\nRotation độc lập\nCó thể dùng crypto-erasure theo điều kiện"
+byok: "Enterprise+ · BYOK\nTenant cung cấp KMS key\nKiểm soát và thu hồi quyền truy cập"
+byok.icon: ../assets/d2/icons/aws-kms.svg
 ```
 
 #### Implementation — Per-Tenant Encryption
 
-```java
+```java source="security-compliance" file="src/security/TenantEncryptionService.java"
 @Service
 public class TenantEncryptionService {
 
@@ -388,24 +380,17 @@ public class TenantEncryptionService {
 
 #### Encryption in Transit
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  ENCRYPTION IN TRANSIT                                       │
-│                                                              │
-│  Client ──TLS 1.3──▶ ALB ──TLS──▶ Service ──TLS──▶ Database  │
-│                                                              │
-│  Requirements:                                               │
-│  ├── TLS 1.2+ (prefer TLS 1.3) for all endpoints             │
-│  ├── mTLS between internal services                          │
-│  ├── Certificate per service (not per tenant)                │
-│  ├── Private CA for internal communication                   │
-│  └── HSTS headers for all web endpoints                      │
-│                                                              │
-│  Per-Tenant Custom Domains:                                  │
-│  ├── acme.app.example.com → ACM certificate (auto-renewal)   │
-│  ├── beta.app.example.com → ACM certificate                  │
-│  └── custom.acme.com → Customer-provided certificate         │
-└──────────────────────────────────────────────────────────────┘
+```d2 title="Mã hóa trên đường truyền"
+direction: right
+n0: "Client"
+n1: "ALB"
+n2: "Service"
+n3: "Database"
+n0 -> n1: "TLS 1.3"
+n1 -> n2: "TLS"
+n2 -> n3: "TLS"
+requirements: "TLS ≥ 1.2, ưu tiên 1.3\nmTLS nội bộ · Private CA\nCertificate theo service · HSTS"
+domains: "acme.app.example.com / beta.app.example.com → ACM\ncustom.acme.com → Certificate của khách hàng"
 ```
 
 ## Compliance (GDPR, HIPAA, SOC2)
@@ -431,7 +416,7 @@ public class TenantEncryptionService {
 
 #### Per-Tenant Compliance Configuration
 
-```java
+```java source="security-compliance" file="src/security/TenantComplianceService.java"
 @Service
 public class TenantComplianceService {
 
@@ -593,6 +578,8 @@ public class GdprErasureService {
     }
 }
 
+```
+
 ## Data Residency & Sovereignty
 
 Data Residency yêu cầu **dữ liệu của tenant phải được lưu trữ và xử lý** tại một vùng địa lý cụ thể (thường là quốc gia/khu vực mà tenant hoạt động).
@@ -624,44 +611,39 @@ Data Residency yêu cầu **dữ liệu của tenant phải được lưu trữ 
 
 #### Multi-Region Architecture
 
-```mermaid
-graph TD
-    subgraph "Global Layer"
-        GR[Global Router / DNS]
-        TMS[Tenant Management Service]
-    end
-
-    subgraph "EU Region (eu-west-1)"
-        EU_GW[API Gateway EU]
-        EU_SVC[Services EU]
-        EU_DB[(Database EU)]
-        EU_S3[Storage EU]
-    end
-
-    subgraph "US Region (us-east-1)"
-        US_GW[API Gateway US]
-        US_SVC[Services US]
-        US_DB[(Database US)]
-        US_S3[Storage US]
-    end
-
-    subgraph "APAC Region (ap-southeast-1)"
-        AP_GW[API Gateway APAC]
-        AP_SVC[Services APAC]
-        AP_DB[(Database APAC)]
-        AP_S3[Storage APAC]
-    end
-
-    GR -->|EU tenants| EU_GW
-    GR -->|US tenants| US_GW
-    GR -->|APAC tenants| AP_GW
-
-    TMS -.->|Tenant→Region mapping| GR
+```d2 title="Multi-Region Architecture"
+direction: down
+group1: "Global Layer" {
+  GR: "Global Router / DNS"
+  TMS: "Tenant Management Service"
+}
+group2: "EU Region (eu-west-1)" {
+  EU_GW: "API Gateway EU"
+  EU_SVC: "Services EU"
+  EU_DB: "Database EU" {shape: cylinder}
+  EU_S3: "Storage EU"
+}
+group3: "US Region (us-east-1)" {
+  US_GW: "API Gateway US"
+  US_SVC: "Services US"
+  US_DB: "Database US" {shape: cylinder}
+  US_S3: "Storage US"
+}
+group4: "APAC Region (ap-southeast-1)" {
+  AP_GW: "API Gateway APAC"
+  AP_SVC: "Services APAC"
+  AP_DB: "Database APAC" {shape: cylinder}
+  AP_S3: "Storage APAC"
+}
+group1.GR -> group2.EU_GW: "EU tenants"
+group1.GR -> group3.US_GW: "US tenants"
+group1.GR -> group4.AP_GW: "APAC tenants"
+group1.TMS -> group1.GR: "Tenant→Region mapping" {style.stroke-dash: 4}
 ```
 
 #### Implementation — Region-Aware Routing
 
-```java
+```java source="security-compliance" file="src/routing/TenantRegionRouter.java"
 @Service
 public class TenantRegionRouter {
 
@@ -769,39 +751,23 @@ Audit log ghi lại **mọi hành động** liên quan đến data và security 
 
 #### Audit Log Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│              AUDIT LOG ARCHITECTURE                             │
-│                                                                 │
-│  Application ──▶ Audit Service ──▶ Storage                      │
-│                                                                 │
-│  ┌──────────┐   ┌──────────────┐   ┌────────────────────────┐   │
-│  │ API call │──▶│ AuditLogger  │──▶│ Kinesis / Kafka        │   │
-│  │ DB write │   │              │   │ (streaming, ordered)   │   │
-│  │ Login    │   │ Enrichment:  │   └─────────┬──────────────┘   │
-│  │ Config   │   │ + timestamp  │             │                  │
-│  │ change   │   │ + tenant_id  │   ┌─────────▼──────────────┐   │
-│  └──────────┘   │ + user_id    │   │ S3 (long-term archive) │   │
-│                 │ + ip_address │   │ (immutable, encrypted) │   │
-│                 │ + request_id │   └─────────┬──────────────┘   │
-│                 └──────────────┘             │                  │
-│                                    ┌─────────▼──────────────┐   │
-│                                    │ OpenSearch / CloudWatc │   │
-│                                    │(searchable, dashboards)│   │
-│                                    └────────────────────────┘   │
-│                                                                 │
-│  Requirements:                                                  │
-│  ├── Immutable (append-only, no delete)                         │
-│  ├── Tamper-proof (hash chain or WORM storage)                  │
-│  ├── Per-tenant isolated (tenant A cannot read B's logs)        │
-│  ├── Searchable (by tenant, user, action, time range)           │
-│  └── Retention: configurable per compliance regime              │
-└─────────────────────────────────────────────────────────────────┘
+```d2 title="Audit log: từ sự kiện tới kho lưu trữ"
+direction: right
+n0: "API call / DB write / Login / Config change"
+n1: "AuditLogger\nTimestamp / Tenant / User / IP / Request ID"
+n2: "Kinesis / Kafka\nStreaming có thứ tự"
+n3: "S3 Archive\nImmutable / Encrypted"
+n4: "OpenSearch / CloudWatch\nSearch / Dashboards"
+n0 -> n1
+n1 -> n2
+n2 -> n3
+n3 -> n4
+requirements: "Append-only / WORM hoặc hash chain\nTenant chỉ đọc audit log của mình\nSearch theo tenant, user, action, thời gian\nRetention theo compliance regime"
 ```
 
 #### Implementation — Structured Audit Logger
 
-```java
+```java source="security-compliance" file="src/audit/TenantAuditService.java"
 @Service
 public class TenantAuditService {
 
@@ -910,7 +876,7 @@ public class AuditEvent {
 
 #### Audit Log Query API — Per Tenant
 
-```java
+```java source="security-compliance" file="src/audit/AuditLogController.java"
 @RestController
 @RequestMapping("/api/audit")
 public class AuditLogController {

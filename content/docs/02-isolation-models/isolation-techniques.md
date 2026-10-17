@@ -5,6 +5,9 @@ description: "Chi tiết triển khai 5 kỹ thuật cách ly tenant: ORM Global
 
 # Các Kỹ thuật Enforce Isolation
 
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
+
 ## Mục lục
 
 - [Tổng quan Defense in Depth](#tổng-quan-defense-in-depth)
@@ -21,30 +24,27 @@ description: "Chi tiết triển khai 5 kỹ thuật cách ly tenant: ORM Global
 
 Không nên dựa vào **một lớp bảo vệ duy nhất**. Nguyên tắc **Defense in Depth** yêu cầu kết hợp nhiều kỹ thuật ở nhiều layer khác nhau:
 
-```mermaid
-graph LR
-    subgraph "Layer 1: Infrastructure"
-        OPA["Policy-as-Code<br/>(OPA/Kyverno)"]
-    end
-
-    subgraph "Layer 2: Application"
-        MW["Middleware<br/>(Tenant Context)"]
-        ORM["ORM Global Filter<br/>(Auto-inject tenant_id)"]
-    end
-
-    subgraph "Layer 3: Database"
-        RLS["Row-Level Security<br/>(PostgreSQL RLS)"]
-        VIEW["View-based<br/>(Per-tenant Views)"]
-    end
-
-    REQ["Request"] --> OPA --> MW --> ORM --> RLS --> DB["Database"]
-    DB --> VIEW
-
-    style OPA fill:#e74c3c,color:#fff
-    style MW fill:#f39c12,color:#fff
-    style ORM fill:#3498db,color:#fff
-    style RLS fill:#2ecc71,color:#fff
-    style VIEW fill:#9b59b6,color:#fff
+```d2 title="Tổng quan Defense in Depth"
+direction: right
+group1: "Layer 1: Infrastructure" {
+  OPA: "Policy-as-Code\n(OPA/Kyverno)"
+}
+group2: "Layer 2: Application" {
+  MW: "Middleware\n(Tenant Context)"
+  ORM: "ORM Global Filter\n(Auto-inject tenant_id)"
+}
+group3: "Layer 3: Database" {
+  RLS: "Row-Level Security\n(PostgreSQL RLS)"
+  VIEW: "View-based\n(Per-tenant Views)"
+}
+REQ: "Request"
+DB: "Database"
+REQ -> group1.OPA
+group1.OPA -> group2.MW
+group2.MW -> group2.ORM
+group2.ORM -> group3.RLS
+group3.RLS -> DB
+DB -> group3.VIEW
 ```
 
 > [!TIP]
@@ -58,21 +58,28 @@ graph LR
 
 ORM Global Filter tự động inject `tenant_id` vào **mọi query** mà developer không cần nhớ thêm manually. Query bình thường:
 
-```sql
-SELECT * FROM orders WHERE status = 'pending';
-```
-
-Sẽ tự động trở thành:
-
-```sql
-SELECT * FROM orders WHERE status = 'pending' AND tenant_id = 'acme-corp-uuid';
+```code-diff
+title: SQL trước và sau khi Hibernate thêm tenant filter
+language: sql
+view: split
+wordDiff: true
+before:
+  code: SELECT * FROM orders WHERE status = 'pending';
+  source:
+    project: isolation-techniques
+    file: sql/application-query.sql
+after:
+  code: SELECT * FROM orders WHERE status = 'pending' AND tenant_id = 'acme-corp-uuid';
+  source:
+    project: isolation-techniques
+    file: sql/generated-query.sql
 ```
 
 ### Ví dụ: Hibernate (Java/Spring)
 
 **Bước 1: Định nghĩa Filter trên Entity**
 
-```java
+```java source="isolation-techniques" file="src/entity/Order.java"
 @Entity
 @FilterDef(name = "tenantFilter", parameters = {
     @ParamDef(name = "tenantId", type = String.class)
@@ -93,7 +100,7 @@ public class Order {
 
 **Bước 2: Enable filter trong Hibernate Interceptor**
 
-```java
+```java source="isolation-techniques" file="src/web/TenantInterceptor.java"
 @Component
 public class TenantInterceptor implements HandlerInterceptor {
 
@@ -126,14 +133,19 @@ List<Order> orders = orderRepository.findByStatus("pending");
 
 Luồng hoàn chỉnh:
 
-```
-Request đến
-  → TenantInterceptor.preHandle()
-      → session.enableFilter("tenantFilter").setParameter("tenantId", "acme-corp-uuid")
-          → orderRepository.findByStatus("pending")  ← developer viết
-              → Hibernate thấy filter đang active trên session
-                  → append "AND tenant_id = 'acme-corp-uuid'" vào SQL
-                      → DB trả về đúng data của tenant
+```d2 title="ORM Global Filter tự thêm điều kiện tenant"
+direction: down
+n0: "Request"
+n1: "TenantInterceptor.preHandle()"
+n2: "enableFilter(tenantFilter)\ntenantId = acme-corp-uuid"
+n3: "orderRepository.findByStatus(pending)"
+n4: "Hibernate nối điều kiện\nAND tenant_id = acme-corp-uuid"
+n5: "DB chỉ trả dữ liệu của tenant"
+n0 -> n1
+n1 -> n2
+n2 -> n3
+n3 -> n4
+n4 -> n5
 ```
 
 > [!NOTE]
@@ -177,50 +189,51 @@ Khác với ORM Filter (filter ở application), RLS không quan tâm query đ�
 
 **Flow hoạt động từng bước:**
 
-```
-① App nhận request của tenant "acme"
-      ↓
-② App set session context:
-      SET app.current_tenant_id = 'acme-corp-uuid'
-      ↓
-③ App gửi query bình thường:
-      SELECT * FROM orders WHERE status = 'pending'
-      ↓
-④ PostgreSQL engine nhìn thấy table "orders" có RLS enabled
-      → đọc policy: tenant_id = current_setting('app.current_tenant_id')
-      → current_setting() trả về 'acme-corp-uuid' từ session context ở bước ②
-      → tự thêm điều kiện vào query
-      ↓
-⑤ SQL thực tế chạy trong DB:
-      SELECT * FROM orders
-      WHERE status = 'pending'
-      AND tenant_id = 'acme-corp-uuid'   ← DB tự thêm, app không biết
-      ↓
-⑥ Chỉ trả rows của acme về cho app
+```d2 title="RLS: session context kết hợp policy"
+direction: down
+n0: "App nhận request của acme"
+n1: "SET app.current_tenant_id\n= acme-corp-uuid"
+n2: "SELECT * FROM orders\nWHERE status = pending"
+n3: "PostgreSQL đọc RLS policy\nvà current_setting(app.current_tenant_id)"
+n4: "DB áp dụng thêm tenant_id\n= acme-corp-uuid"
+n5: "Chỉ trả rows của acme"
+n0 -> n1
+n1 -> n2
+n2 -> n3
+n3 -> n4
+n4 -> n5
 ```
 
 Điểm mấu chốt: **`current_setting()` đọc từ session context của chính connection đó** — mỗi connection có session context riêng biệt, nên tenant A không thể đọc data của tenant B dù dùng cùng DB.
 
-```mermaid
-graph TD
-    A["App: acme request"] -->|"SET tenant_id = acme"| S1["Session A\ntenant_id = acme"]
-    B["App: beta request"] -->|"SET tenant_id = beta"| S2["Session B\ntenant_id = beta"]
-    C["pgAdmin (direct)"] -->|"SET tenant_id = acme"| S3["Session C\ntenant_id = acme"]
-
-    S1 --> RLS["PostgreSQL RLS Engine\n(đọc policy + session context)"]
-    S2 --> RLS
-    S3 --> RLS
-
-    RLS -->|"acme rows only"| R1["orders của acme"]
-    RLS -->|"beta rows only"| R2["orders của beta"]
-    RLS -->|"acme rows only"| R3["orders của acme"]
+```d2 title="Nguyên lý"
+direction: down
+A: "App: acme request"
+S1: "Session A\ntenant_id = acme"
+B: "App: beta request"
+S2: "Session B\ntenant_id = beta"
+C: "pgAdmin (direct)"
+S3: "Session C\ntenant_id = acme"
+RLS: "PostgreSQL RLS Engine\n(đọc policy + session context)"
+R1: "orders của acme"
+R2: "orders của beta"
+R3: "orders của acme"
+A -> S1: "SET tenant_id = acme"
+B -> S2: "SET tenant_id = beta"
+C -> S3: "SET tenant_id = acme"
+S1 -> RLS
+S2 -> RLS
+S3 -> RLS
+RLS -> R1: "acme rows only"
+RLS -> R2: "beta rows only"
+RLS -> R3: "acme rows only"
 ```
 
 ### Ví dụ: PostgreSQL RLS
 
 **Bước 1: Enable RLS trên table**
 
-```sql
+```sql source="isolation-techniques" file="sql/enable-rls.sql"
 -- Sau lệnh này, mặc định KHÔNG ai đọc được gì cả (deny all)
 -- cho đến khi có policy cho phép
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
@@ -228,7 +241,7 @@ ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 
 **Bước 2: Tạo policy**
 
-```sql
+```sql source="isolation-techniques" file="sql/tenant-policy.sql"
 -- Policy này nói: "chỉ trả row nào có tenant_id bằng với giá trị
 -- trong session context của connection hiện tại"
 CREATE POLICY tenant_isolation ON orders
@@ -259,7 +272,7 @@ SELECT * FROM orders WHERE status = 'pending';
 
 **Bước 4: Trong application code (Node.js)**
 
-```typescript
+```typescript source="isolation-techniques" file="src/db/with-tenant-context.ts"
 async function withTenantContext(
   tenantId: string,
   callback: () => Promise<void>,
@@ -292,7 +305,7 @@ Khi dùng connection pool (PgBouncer, Prisma), cần dùng **session-level** poo
 
 **Workaround cho transaction mode**: Dùng `SET LOCAL` trong transaction:
 
-```sql
+```sql source="isolation-techniques" file="sql/transaction-context.sql"
 BEGIN;
 SET LOCAL app.current_tenant_id = 'acme-corp-uuid';
 SELECT * FROM orders;
@@ -484,19 +497,23 @@ REVOKE ALL ON orders FROM role_acme_readonly;
 
 Middleware/Interceptor ở **application layer** — set tenant context cho mỗi request, đảm bảo mọi downstream code đều biết tenant hiện tại.
 
-```mermaid
-graph TD
-    REQ["HTTP Request<br/>GET /api/orders"] --> AUTH["Auth Middleware<br/>Validate JWT"]
-    AUTH --> TM["Tenant Middleware<br/>Extract & Set Tenant Context"]
-    TM --> CTRL["Controller"]
-    CTRL --> SVC["Service Layer"]
-    SVC --> REPO["Repository<br/>(Uses Tenant Context)"]
-    REPO --> DB["Database"]
-
-    TM -.->|"Set tenantId in<br/>Request / ThreadLocal / AsyncLocalStorage"| SVC
-    TM -.-> REPO
-
-    style TM fill:#f39c12,color:#fff
+```d2 title="Nguyên lý"
+direction: down
+REQ: "HTTP Request\nGET /api/orders"
+AUTH: "Auth Middleware\nValidate JWT"
+TM: "Tenant Middleware\nExtract & Set Tenant Context"
+CTRL: "Controller"
+SVC: "Service Layer"
+REPO: "Repository\n(Uses Tenant Context)"
+DB: "Database"
+REQ -> AUTH
+AUTH -> TM
+TM -> CTRL
+CTRL -> SVC
+SVC -> REPO
+REPO -> DB
+TM -> SVC: "Set tenantId in\nRequest / ThreadLocal / AsyncLocalStorage" {style.stroke-dash: 4}
+TM -> REPO {style.stroke-dash: 4}
 ```
 
 ### Ví dụ: Express.js (Node.js)
@@ -609,12 +626,20 @@ const tenantId = await getTenantByUserId(req.user.id);
 
 Hãy hình dung như một **bảo vệ ở cổng** — trước khi request vào đến app, bảo vệ kiểm tra: "Anh có header tenant đúng không? tenant_id trong header có khớp JWT không? Tenant này còn active không?" — nếu fail bất kỳ điều kiện nào → từ chối ngay, app không bao giờ nhìn thấy request đó.
 
-```
-Không có Policy-as-Code:
-  Request → App (app tự validate từng chỗ một, dễ bỏ sót)
-
-Có Policy-as-Code:
-  Request → OPA Engine (check policy) → App (chỉ nhận request đã pass)
+```d2 title="Tách kiểm tra policy khỏi ứng dụng"
+direction: right
+without: "Không có Policy-as-Code" {
+  n0: "Request"
+  n1: "App tự kiểm tra từng chỗ\nDễ bỏ sót"
+  n0 -> n1
+}
+with: "Có Policy-as-Code" {
+  n0: "Request"
+  n1: "OPA Engine\nKiểm tra policy"
+  n2: "App chỉ nhận request đã pass"
+  n0 -> n1
+  n1 -> n2
+}
 ```
 
 **Tại sao cần?** Vì các kỹ thuật trước (ORM Filter, RLS, Middleware) đều nằm **bên trong** app — nếu developer quên apply, hoặc có một entrypoint mới chưa add middleware, thì hở. Policy-as-Code nằm **ngoài** app, enforce ở tầng infrastructure trước khi code app chạy.
@@ -636,22 +661,17 @@ Có Policy-as-Code:
 
 **Flow hoạt động của OPA:**
 
-```
-① Request đến API Gateway
-      ↓
-② Gateway hỏi OPA: "Request này có được phép không?"
-      → Gửi kèm: headers, JWT token, path, method
-      ↓
-③ OPA đọc policy file (.rego), chạy các rule:
-      - Header x-tenant-id có tồn tại không?
-      - tenant_id trong header == tenant_id trong JWT?
-      - Tenant này có status = "active" trong DB không?
-      ↓
-④ OPA trả về: { "allow": true } hoặc { "allow": false }
-      ↓
-⑤ Gateway quyết định:
-      allow = true  → forward request đến App
-      allow = false → trả về 403 ngay, App không thấy gì
+```d2 title="Gateway chỉ forward request được policy cho phép"
+direction: down
+gateway: API Gateway
+input: "Headers, JWT, path, method"
+opa: "OPA kiểm tra\nx-tenant-id tồn tại\nHeader khớp JWT\nTenant đang active"
+allow: "allow?" {shape: diamond}
+app: Forward tới App
+reject: 403 Forbidden
+gateway -> input -> opa -> allow
+allow -> app: true
+allow -> reject: false
 ```
 
 ```mermaid
@@ -679,7 +699,7 @@ sequenceDiagram
 
 **Policy file — viết bằng Rego:**
 
-```rego
+```rego source="isolation-techniques" file="policies/tenant-isolation.rego"
 # tenant_isolation.rego
 package api.tenant
 
@@ -715,7 +735,7 @@ tenant_active[tenant] {
 
 **Deploy OPA sidecar trong K8s — chạy song song với app container:**
 
-```yaml
+```yaml source="isolation-techniques" file="k8s/opa-sidecar.yaml"
 apiVersion: apps/v1
 kind: Deployment
 spec:
@@ -824,24 +844,27 @@ spec:
 
 ### Recommended combination theo model
 
-```mermaid
-graph LR
-    POOL["Pool Model"] --> POOL_MW["App Middleware\n(Tenant Context)"]
-    POOL_MW --> POOL_ORM["ORM Global Filter"]
-    POOL_ORM --> POOL_RLS["RLS\n(Defense in depth)"]
-
-    BRIDGE["Bridge Model"] --> BRIDGE_MW["App Middleware\n(Tenant Router)"]
-    BRIDGE_MW --> BRIDGE_ORM["ORM Filter + RLS\n(Pool tenants)"]
-    BRIDGE_MW --> BRIDGE_NET["Network Policy\n(Silo tenants)"]
-
-    SILO["Silo Model"] --> SILO_INFRA["VPC / K8s Namespace\n(Infrastructure isolation)"]
-    SILO_INFRA --> SILO_OPA["OPA / Kyverno\n(Boundary enforcement)"]
-
-    style POOL fill:#2ecc71,color:#fff
-    style BRIDGE fill:#f39c12,color:#fff
-    style SILO fill:#e74c3c,color:#fff
-    style POOL_RLS fill:#2ecc71,color:#fff
-    style SILO_OPA fill:#e74c3c,color:#fff
+```d2 title="Recommended combination theo model"
+direction: right
+POOL: "Pool Model"
+POOL_MW: "App Middleware\n(Tenant Context)"
+POOL_ORM: "ORM Global Filter"
+POOL_RLS: "RLS\n(Defense in depth)"
+BRIDGE: "Bridge Model"
+BRIDGE_MW: "App Middleware\n(Tenant Router)"
+BRIDGE_ORM: "ORM Filter + RLS\n(Pool tenants)"
+BRIDGE_NET: "Network Policy\n(Silo tenants)"
+SILO: "Silo Model"
+SILO_INFRA: "VPC / K8s Namespace\n(Infrastructure isolation)"
+SILO_OPA: "OPA / Kyverno\n(Boundary enforcement)"
+POOL -> POOL_MW
+POOL_MW -> POOL_ORM
+POOL_ORM -> POOL_RLS
+BRIDGE -> BRIDGE_MW
+BRIDGE_MW -> BRIDGE_ORM
+BRIDGE_MW -> BRIDGE_NET
+SILO -> SILO_INFRA
+SILO_INFRA -> SILO_OPA
 ```
 
 ### Decision guide

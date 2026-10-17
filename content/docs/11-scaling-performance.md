@@ -7,66 +7,32 @@ description: "Tenant-aware auto scaling, database scaling (partitioning, shardin
 
 Scaling multi-tenant khác với single-tenant vì phải **giữ fair resource distribution** giữa các tenant khi scale. Không thể scale cho 1 tenant mà ảnh hưởng đến tenant khác.
 
+```d2 title="Các chiều của chiến lược scaling"
+direction: right
+what: "Scale gì?\nCompute / DB / Cache / Queue / Storage"
+how: "Scale như thế nào?\nHorizontal: thêm pods\nVertical: pods lớn hơn"
+when: "Khi nào?\nCPU > 70% / Memory > 80%\nQueue depth > N / Latency > SLA\nYêu cầu tenant"
+who: "Cho ai?\nPlatform / Tier / Enterprise tenant"
+what -> how -> when -> who
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│              MULTI-TENANT SCALING STRATEGY                       │
-│                                                                  │
-│  Scale WHAT?          Scale HOW?        Scale WHEN?              │
-│  ┌─────────────┐     ┌──────────────┐  ┌──────────────────┐      │
-│  │ Compute     │     │ Horizontal   │  │ CPU > 70%        │      │
-│  │ Database    │     │ (add pods)   │  │ Memory > 80%     │      │
-│  │ Cache       │     │              │  │ Queue depth > N  │      │
-│  │ Queue       │     │ Vertical     │  │ Latency > SLA    │      │
-│  │ Storage     │     │ (bigger pods)│  │ Tenant request   │      │
-│  └─────────────┘     └──────────────┘  └──────────────────┘      │
-│                                                                  │
-│  Scale FOR WHOM?                                                 │
-│  ├── Platform-wide: scale shared infrastructure                  │
-│  ├── Per-tier: different scaling for Free/Pro/Enterprise         │
-│  └── Per-tenant: dedicated scaling for Enterprise (silo)         │
-└──────────────────────────────────────────────────────────────────┘
-```
+
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
 
 ## Horizontal vs Vertical Scaling per Tenant
 
 #### Scaling Strategies theo Tier
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│              SCALING PER TIER                                    │
-│                                                                  │
-│  FREE TIER (Pool — shared everything):                           │
-│  ┌───────────────────────────────────────────┐                   │
-│  │  Compute: shared pods, NO dedicated scale │                   │
-│  │  DB: shared instance, scale vertically    │                   │
-│  │  Cache: shared Redis, scale cluster       │                   │
-│  │  Strategy: scale platform when total load │                   │
-│  │  increases → all free tenants benefit     │                   │
-│  └───────────────────────────────────────────┘                   │
-│                                                                  │
-│  PRO TIER (Pool — priority scaling):                             │
-│  ┌───────────────────────────────────────────┐                   │
-│  │  Compute: shared pods with priority class │                   │
-│  │  DB: shared instance, read replicas       │                   │
-│  │  Cache: dedicated Redis DB number         │                   │
-│  │  Strategy: HPA scales based on Pro-tier   │                   │
-│  │  metrics, preempts Free resources         │                   │
-│  └───────────────────────────────────────────┘                   │
-│                                                                  │
-│  ENTERPRISE TIER (Silo — independent scaling):                   │
-│  ┌───────────────────────────────────────────┐                   │
-│  │  Compute: dedicated namespace + pods      │                   │
-│  │  DB: dedicated RDS, scale independently   │                   │
-│  │  Cache: dedicated Redis cluster           │                   │
-│  │  Strategy: per-tenant HPA + VPA           │                   │
-│  │  tenant can request custom scaling        │                   │
-│  └───────────────────────────────────────────┘                   │
-└──────────────────────────────────────────────────────────────────┘
+```d2 title="Scaling theo tier"
+direction: right
+free: "Free · Pool\nShared pods, DB và Redis\nScale platform theo tổng tải"
+pro: "Pro · Priority scaling\nShared pods + priority class\nRead replicas / Redis DB number riêng\nHPA theo metrics của Pro"
+ent: "Enterprise · Silo\nNamespace + pods riêng\nRDS + Redis cluster riêng\nHPA / VPA theo tenant"
 ```
 
 #### Kubernetes HPA — Tenant-aware Scaling
 
-```yaml
+```yaml source="scaling-performance" file="k8s/hpa.yaml"
 # Shared pool HPA — scale based on aggregate tenant metrics
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -146,7 +112,7 @@ spec:
 
 #### Pod Priority — Tier-based Preemption
 
-```yaml
+```yaml source="scaling-performance" file="k8s/priority-classes.yaml"
 # Priority Classes
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
@@ -200,34 +166,21 @@ Multi-tenant caching phải giải quyết 3 vấn đề: **isolation** (tenant 
 
 #### Multi-Layer Cache Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│              MULTI-LAYER CACHE                                   │
-│                                                                  │
-│  Layer 1: In-Process (Caffeine) — per pod                        │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │  TTL: 30s–5min | Max: 1000 entries per tenant            │    │
-│  │  Key: tenant:{tid}:{entity}:{id}                         │    │
-│  │  Use: hot path data, avoid Redis roundtrip               │    │
-│  └──────────────────────────────────────────────────────────┘    │
-│                      ▼ miss                                      │
-│  Layer 2: Distributed (Redis) — shared or dedicated              │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │  TTL: 5min–1hr | Max: per-tenant memory quota            │    │
-│  │  Key: tenant:{tid}:{service}:{entity}:{id}               │    │
-│  │  Use: cross-pod shared state, sessions, configs          │    │
-│  └──────────────────────────────────────────────────────────┘    │
-│                      ▼ miss                                      │
-│  Layer 3: Database                                               │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │  Source of truth, always filtered by tenant_id           │    │
-│  └──────────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────┘
+```d2 title="Cache nhiều lớp, mọi key đều có tenant scope"
+direction: down
+n0: "L1 · Caffeine / mỗi pod\nTTL 30s–5min · 1000 entries/tenant\nKey: tenant:{tid}:{entity}:{id}\nHot path, tránh Redis roundtrip"
+n1: "L2 · Redis / shared hoặc dedicated\nTTL 5min–1h · Memory quota theo tenant\nKey: tenant:{tid}:{service}:{entity}:{id}\nSessions / Config / Shared state"
+n2: "L3 · Database\nSource of truth\nLuôn filter theo tenant_id"
+n0 -> n1: "Cache miss"
+n1 -> n2: "Cache miss"
+n1.icon: ../assets/d2/icons/redis.svg
+n0.tooltip: "Mở code triển khai trong Source Explorer"
+n0.link: "./?source=scaling-performance&file=src/cache/TenantCacheConfig.java"
 ```
 
 #### Implementation — Tenant-aware Caffeine Cache
 
-```java
+```java source="scaling-performance" file="src/cache/TenantCacheConfig.java"
 @Configuration
 public class TenantCacheConfig {
 
@@ -336,33 +289,15 @@ Database connections là **tài nguyên hữu hạn** — multi-tenant phải ch
 
 #### Connection Pool Strategy per Tier
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│              CONNECTION POOL ARCHITECTURE                        │
-│                                                                  │
-│  Pool Model (Free + Pro):                                        │
-│  ┌─────────────────────────────────────────────────────────┐     │
-│  │  Shared HikariCP Pool                                   │     │
-│  │  ├── Max total: 100 connections                         │     │
-│  │  ├── Per-tenant limit: 10 (Free), 30 (Pro)              │     │
-│  │  ├── Timeout: 5s (Free), 10s (Pro)                      │     │
-│  │  └── Semaphore enforced per tenant                      │     │
-│  └─────────────────────────────────────────────────────────┘     │
-│                                                                  │
-│  Silo Model (Enterprise):                                        │
-│  ┌─────────────────────────────────────────────────────────┐     │
-│  │  Dedicated HikariCP Pool                                │     │
-│  │  ├── Max: 50 connections (dedicated DB)                 │     │
-│  │  ├── No sharing with other tenants                      │     │
-│  │  ├── Timeout: 30s                                       │     │
-│  │  └── Independent scaling                                │     │
-│  └─────────────────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────────────────┘
+```d2 title="Connection pool theo mô hình tenant"
+direction: right
+pool: "Free + Pro · Shared HikariCP\nMax total: 100 connections\nFree: 10/tenant · timeout 5s\nPro: 30/tenant · timeout 10s\nSemaphore theo tenant"
+silo: "Enterprise · Dedicated HikariCP\nMax: 50 connections / dedicated DB\nTimeout: 30s\nKhông chia sẻ với tenant khác\nScale độc lập"
 ```
 
 #### Implementation — Per-Tenant Connection Limiter
 
-```java
+```java source="scaling-performance" file="src/db/TenantConnectionPool.java"
 /**
  * Tenant-aware connection pool wrapper
  * Giới hạn số connection mà mỗi tenant có thể sử dụng
@@ -464,7 +399,7 @@ public class TenantAwareConnection implements Connection {
 
 #### HikariCP Configuration — Per Model
 
-```yaml
+```yaml source="scaling-performance" file="config/hikaricp.yaml"
 # Shared pool (Free + Pro tenants)
 spring:
   datasource:
@@ -502,7 +437,7 @@ Auto scaling phải **phản ứng thông minh** — scale shared infrastructure
 
 #### KEDA — Event-Driven Autoscaling per Tenant
 
-```yaml
+```yaml source="scaling-performance" file="k8s/keda.yaml"
 # KEDA ScaledObject — scale worker pods based on
 # per-tenant SQS queue depth
 apiVersion: keda.sh/v1alpha1
@@ -557,29 +492,40 @@ spec:
 
 #### Scaling Decision Tree
 
-```mermaid
-graph TD
-    START[Scale Event Detected] --> CHECK{Which tier?}
-
-    CHECK -->|Free/Pro| SHARED[Shared Pool Scaling]
-    CHECK -->|Enterprise| DEDICATED[Dedicated Scaling]
-
-    SHARED --> S1{CPU > 70% or<br/>Latency > SLA?}
-    S1 -->|Yes| S2[Scale shared pods +20%]
-    S1 -->|No| S3{Queue depth > 100?}
-    S3 -->|Yes| S4[Scale worker pods]
-    S3 -->|No| S5[No action]
-
-    DEDICATED --> D1{Tenant metrics<br/>above threshold?}
-    D1 -->|Yes| D2[Scale tenant pods]
-    D1 -->|No| D3{Tenant requested<br/>manual scale?}
-    D3 -->|Yes| D4[Apply requested scale]
-    D3 -->|No| D5[No action]
-
-    S2 --> ALERT[Record scaling event<br/>in tenant metrics]
-    S4 --> ALERT
-    D2 --> ALERT
-    D4 --> ALERT
+```d2 title="Scaling Decision Tree"
+direction: down
+START: "Scale Event Detected"
+CHECK: "Which tier?" {shape: diamond}
+SHARED: "Shared Pool Scaling"
+DEDICATED: "Dedicated Scaling"
+S1: "CPU > 70% or\nLatency > SLA?" {shape: diamond}
+S2: "Scale shared pods +20%"
+S3: "Queue depth > 100?" {shape: diamond}
+S4: "Scale worker pods"
+S5: "No action"
+D1: "Tenant metrics\nabove threshold?" {shape: diamond}
+D2: "Scale tenant pods"
+D3: "Tenant requested\nmanual scale?" {shape: diamond}
+D4: "Apply requested scale"
+D5: "No action"
+ALERT: "Record scaling event\nin tenant metrics"
+START -> CHECK
+CHECK -> SHARED: "Free/Pro"
+CHECK -> DEDICATED: "Enterprise"
+SHARED -> S1
+S1 -> S2: "Yes"
+S1 -> S3: "No"
+S3 -> S4: "Yes"
+S3 -> S5: "No"
+DEDICATED -> D1
+D1 -> D2: "Yes"
+D1 -> D3: "No"
+D3 -> D4: "Yes"
+D3 -> D5: "No"
+S2 -> ALERT
+S4 -> ALERT
+D2 -> ALERT
+D4 -> ALERT
 ```
 
 #### Tổng kết — Scaling & Performance Checklist

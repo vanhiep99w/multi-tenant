@@ -1,0 +1,157 @@
+[
+  {
+    "file": "kubernetes.svg",
+    "url": "https://icons.d2lang.com/azure/_Companies/Kubernetes.svg",
+    "sha256": "aba51863e22903d8b44662ed9a7100b0d7b8977251662a608c8f8b71f5964279"
+  },
+  {
+    "file": "postgresql.svg",
+    "url": "https://icons.d2lang.com/dev/postgresql.svg",
+    "sha256": "b629cb7e0251e2c22b5b35182ff26f1e5cc620d036f873a4fddd30a569dd461b"
+  },
+  {
+    "file": "redis.svg",
+    "url": "https://icons.d2lang.com/dev/redis.svg",
+    "sha256": "a468661f2928a2f4461eec7bd71eb9dd99726738a0912eb4fb6a82494d79f08d"
+  },
+  {
+    "file": "aws-cloudfront.svg",
+    "url": "https://icons.d2lang.com/aws/Networking%20%26%20Content%20Delivery/Amazon-CloudFront.svg",
+    "sha256": "bcdcc3bd8b00d4b82f4ad7fa50e83896d96e4dc9572de1fe7a92c14a5b7abd60"
+  },
+  {
+    "file": "aws-route53.svg",
+    "url": "https://icons.d2lang.com/aws/Networking%20%26%20Content%20Delivery/Amazon-Route-53.svg",
+    "sha256": "fb5a29f16e8d93954fe39342dec28df70da1942a1729f4593ce9abb41eab99b1"
+  },
+  {
+    "file": "aws-api-gateway.svg",
+    "url": "https://icons.d2lang.com/aws/Networking%20%26%20Content%20Delivery/Amazon-API-Gateway.svg",
+    "sha256": "ef4aec9c0aa6de58b2a84f6e0f27c3bb9c5e2e3699c1467e13c704b5810f9144"
+  },
+  {
+    "file": "aws-cognito.svg",
+    "url": "https://icons.d2lang.com/aws/Security%2C%20Identity%2C%20%26%20Compliance/Amazon-Cognito.svg",
+    "sha256": "14a9a39c418164d8dadfec3545302ab9e453f7ab24824f551a4d2a10e4f5db74"
+  },
+  {
+    "file": "aws-waf.svg",
+    "url": "https://icons.d2lang.com/aws/Security%2C%20Identity%2C%20%26%20Compliance/AWS-WAF.svg",
+    "sha256": "9eb23bb728d59577cc1500322753a96a3f1f1348bf9ba61ed21c8dab1ff5a00d"
+  },
+  {
+    "file": "aws-lambda.svg",
+    "url": "https://icons.d2lang.com/aws/Compute/AWS-Lambda.svg",
+    "sha256": "53b408426985e922c13d340c89c28bde1ea8b4db7e04787cac5454735cccf504"
+  },
+  {
+    "file": "aws-eks.svg",
+    "url": "https://icons.d2lang.com/aws/Compute/Amazon-Elastic-Kubernetes-Service.svg",
+    "sha256": "68a0ca208ce47206d1d685fe182b8ab84c5fc143b247ef4566e74d24732b4585"
+  },
+  {
+    "file": "aws-aurora.svg",
+    "url": "https://icons.d2lang.com/aws/Database/Amazon-Aurora.svg",
+    "sha256": "a1f15dfc94f9c77cd3eee4bc466d530dd6063de3794ade58403e58a7c068fd0b"
+  },
+  {
+    "file": "aws-elasticache.svg",
+    "url": "https://icons.d2lang.com/aws/Database/Amazon-ElastiCache.svg",
+    "sha256": "4832a892a358678c920cf4c5fc2d2ed1069a66b394afc2b56ea3a6d5eec0a463"
+  },
+  {
+    "file": "aws-s3.svg",
+    "url": "https://icons.d2lang.com/aws/Storage/Amazon-Simple-Storage-Service-S3.svg",
+    "sha256": "33b02f474419040cb30eef4fad90f18659819f95d23a9bfaa5d57449f832a0fe"
+  },
+  {
+    "file": "aws-sqs.svg",
+    "url": "https://icons.d2lang.com/aws/Application%20Integration/Amazon-Simple-Queue-Service-SQS.svg",
+    "sha256": "b5c6f06c315a0af615e3421883acf70a4612b4505270128bc7ca44c617cc1113"
+  },
+  {
+    "file": "aws-sns.svg",
+    "url": "https://icons.d2lang.com/aws/Application%20Integration/Amazon-Simple-Notification-Service-SNS.svg",
+    "sha256": "42f902ace6042942f505436d5eee4419a8415c5d5dd2abd5e4c2ddfabdf8c1d2"
+  },
+  {
+    "file": "aws-kinesis.svg",
+    "url": "https://icons.d2lang.com/aws/Analytics/Amazon-Kinesis.svg",
+    "sha256": "1d9d934a9852acfe1b2a6e458e718ef2d327adfd0c1a28803fd4995767ac0f5d"
+  },
+  {
+    "file": "aws-cloudwatch.svg",
+    "url": "https://icons.d2lang.com/aws/Management%20%26%20Governance/Amazon-CloudWatch.svg",
+    "sha256": "625a894fd6bd849b50201afd1074ad06748b43cd13335ebd6f4a7a9c96b34e1e"
+  },
+  {
+    "file": "aws-xray.svg",
+    "url": "https://icons.d2lang.com/aws/Developer%20Tools/AWS-X-Ray.svg",
+    "sha256": "0b85809d84ba09b410d2f06d6e1805d280340e00b24df7923452ad0bc6fa7701"
+  },
+  {
+    "file": "aws-kms.svg",
+    "url": "https://icons.d2lang.com/aws/Security%2C%20Identity%2C%20%26%20Compliance/AWS-Key-Management-Service.svg",
+    "sha256": "cd990ab3f139a525f77ca040fa2c9d278829ac3ad37cd9e5230e5df007a83c04"
+  },
+  {
+    "file": "azure-front-door.svg",
+    "url": "https://icons.d2lang.com/azure/Networking%20Service%20Color/Front%20Doors.svg",
+    "sha256": "6a7d14f201e5b5e33d7fec64a7c6c3ee810811df5fd4f091a63ee60c6f4c9a52"
+  },
+  {
+    "file": "azure-api-management.svg",
+    "url": "https://icons.d2lang.com/azure/Integration%20Service%20Color/API%20Management%20Services.svg",
+    "sha256": "05c3227ca7111ab36e3c6ed8564e65c9c7ae9db4ba7ad8da71b9ae0c40e5b4e4"
+  },
+  {
+    "file": "azure-aks.svg",
+    "url": "https://icons.d2lang.com/azure/Container%20Service%20Color/Kubernetes%20Services.svg",
+    "sha256": "2e7079fd3c83f5b60c46cefee5caf202c3949e649fbc67d52179b4f0b80a949c"
+  },
+  {
+    "file": "azure-sql.svg",
+    "url": "https://icons.d2lang.com/azure/Databases%20Service%20Color/SQL%20Databases.svg",
+    "sha256": "e291397c2a6f452e559769dcc79a2f3a7f7ac9081c2d927ef0e545e42b69c15a"
+  },
+  {
+    "file": "azure-storage.svg",
+    "url": "https://icons.d2lang.com/azure/Storage%20Service%20Color/Storage%20Accounts.svg",
+    "sha256": "168e64e82a6a1218112e378d1b75f5fc661b2260a5ace4fc71b75f568b30bae3"
+  },
+  {
+    "file": "gcp-cdn.svg",
+    "url": "https://icons.d2lang.com/gcp/Products%20and%20services/Networking/Cloud%20CDN.svg",
+    "sha256": "75ae0f3610f5d2ccea671fc4a719119485314413305e62999a98aefa14060fe4"
+  },
+  {
+    "file": "gcp-apigee.svg",
+    "url": "https://icons.d2lang.com/gcp/Products%20and%20services/API%20Management/Apigee%20API%20Platform.svg",
+    "sha256": "47b2ed79e16b6c5605483d34474d54396adb7cdcf2bb3cfb53f07941e351f862"
+  },
+  {
+    "file": "gcp-sql.svg",
+    "url": "https://icons.d2lang.com/gcp/Products%20and%20services/Databases/Cloud%20SQL.svg",
+    "sha256": "12850037d5d78ac3e558a78ae39ae3931fecd2e14d1a26dea627b4acfd7a9042"
+  },
+  {
+    "file": "gcp-memorystore.svg",
+    "url": "https://icons.d2lang.com/gcp/Products%20and%20services/Databases/Cloud%20Memorystore.svg",
+    "sha256": "8bbf5cee62667f214bce4b1bd46e988884ef38b9c47046d4c131b65ee3fd0735"
+  },
+  {
+    "file": "gcp-storage.svg",
+    "url": "https://icons.d2lang.com/gcp/Products%20and%20services/Storage/Cloud%20Storage.svg",
+    "sha256": "9b205fe0990d371ffc4c27135dd16297503e24441a80b9dbfb73f73d2d614878"
+  },
+  {
+    "file": "gcp-bigquery.svg",
+    "url": "https://icons.d2lang.com/gcp/Products%20and%20services/Data%20Analytics/BigQuery.svg",
+    "sha256": "4f40dac577cfdea74b218551a65a4ce6a7bfb70301378d8113ca485eb094e873"
+  },
+  {
+    "file": "gcp-pubsub.svg",
+    "url": "https://icons.d2lang.com/gcp/Products%20and%20services/Data%20Analytics/Cloud%20PubSub.svg",
+    "sha256": "3f40e68159c344ba117690b64f49a47eaaca94803c914d83c7695c2648edb02d"
+  }
+]

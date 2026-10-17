@@ -20,19 +20,13 @@ description: "Ba mô hình cách ly tenant: Silo (Dedicated), Pool (Shared), Bri
 
 Việc chọn đúng mô hình isolation ảnh hưởng trực tiếp đến **chi phí, bảo mật, hiệu năng và khả năng scale** của toàn bộ hệ thống. Ba mô hình nằm trên một spectrum:
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                    ISOLATION SPECTRUM                                │
-│                                                                      │
-│  Silo                    Bridge                    Pool              │
-│  (Dedicated)             (Hybrid)                  (Shared)          │
-│  ◄──────────────────────────────────────────────────────────►        │
-│                                                                      │
-│  🔒 Max Isolation                              💰 Max Cost Savings   │
-│  💰 Max Cost                                   🔒 Min Isolation      │
-│  🔧 Max Customization                          🔧 Min Customization  │
-│  📈 Min Resource Efficiency                    📈 Max Efficiency     │
-└──────────────────────────────────────────────────────────────────────┘
+```d2 title="Phổ cách ly: Silo → Bridge → Pool"
+direction: right
+n0: "Silo (Dedicated)\nCách ly, chi phí, tùy biến cao\nHiệu suất sử dụng tài nguyên thấp"
+n1: "Bridge (Hybrid)\nKết hợp theo yêu cầu tenant"
+n2: "Pool (Shared)\nTiết kiệm, hiệu suất cao\nCách ly và tùy biến thấp"
+n0 -> n1
+n1 -> n2
 ```
 
 > [!IMPORTANT]
@@ -46,29 +40,26 @@ Việc chọn đúng mô hình isolation ảnh hưởng trực tiếp đến **c
 
 ### Kiến trúc
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      SILO MODEL                                 │
-│                                                                 │
-│  ┌──────────────────┐   ┌──────────────────┐   ┌──────────────┐ │
-│  │    Tenant A      │   │    Tenant B      │   │   Tenant C   │ │
-│  │                  │   │                  │   │              │ │
-│  │  ┌─────────────┐ │   │  ┌─────────────┐ │   │ ┌──────────┐ │ │
-│  │  │   App Pod   │ │   │  │   App Pod   │ │   │ │ App Pod  │ │ │
-│  │  │  (Private)  │ │   │  │  (Private)  │ │   │ │(Private) │ │ │
-│  │  └──────┬──────┘ │   │  └──────┬──────┘ │   │ └─────┬────┘ │ │
-│  │  ┌──────┴──────┐ │   │  ┌──────┴──────┐ │   │ ┌─────┴────┐ │ │
-│  │  │  Database   │ │   │  │  Database   │ │   │ │ Database │ │ │
-│  │  │  (Private)  │ │   │  │  (Private)  │ │   │ │(Private) │ │ │
-│  │  └─────────────┘ │   │  └─────────────┘ │   │ └──────────┘ │ │
-│  │  ┌─────────────┐ │   │  ┌─────────────┐ │   │ ┌──────────┐ │ │
-│  │  │ Cache+Store │ │   │  │ Cache+Store │ │   │ │Cache+Stor│ │ │
-│  │  └─────────────┘ │   │  └─────────────┘ │   │ └──────────┘ │ │
-│  │  VPC / Namespace │   │  VPC / Namespace │   │VPC/Namespace │ │
-│  └──────────────────┘   └──────────────────┘   └──────────────┘ │
-│                                                                 │
-│  Mọi thứ tách biệt: compute, data, network, storage             │
-└─────────────────────────────────────────────────────────────────┘
+```d2 title="Silo: compute, data, cache, storage và network riêng"
+direction: right
+a: "Tenant A" {
+  app: "Application"
+  db: "Database riêng" {shape: cylinder}
+  app -> db
+  cache: "Cache + Storage riêng"
+}
+b: "Tenant B" {
+  app: "Application"
+  db: "Database riêng" {shape: cylinder}
+  app -> db
+  cache: "Cache + Storage riêng"
+}
+c: "Tenant C" {
+  app: "Application"
+  db: "Database riêng" {shape: cylinder}
+  app -> db
+  cache: "Cache + Storage riêng"
+}
 ```
 
 ### Các mức Silo
@@ -121,46 +112,46 @@ Việc chọn đúng mô hình isolation ảnh hưởng trực tiếp đến **c
 
 ### Kiến trúc
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                       POOL MODEL                               │
-│                                                                │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │                  Shared Compute Layer                    │  │
-│  │   Request → Extract Tenant ID → Route → Process          │  │
-│  │   ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐         │  │
-│  │   │ Pod 1  │  │ Pod 2  │  │ Pod 3  │  │ Pod N  │         │  │
-│  │   │(shared)│  │(shared)│  │(shared)│  │(shared)│         │  │
-│  │   └────────┘  └────────┘  └────────┘  └────────┘         │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │              Shared Database                             │  │
-│  │  ┌──────────┬───────────┬─────────┬──────────┐           │  │
-│  │  │tenant_id │ order_id  │ amount  │ status   │           │  │
-│  │  ├──────────┼───────────┼─────────┼──────────┤           │  │
-│  │  │ acme     │ ORD-001   │ $100    │ paid     │           │  │
-│  │  │ beta     │ ORD-003   │ $75     │ paid     │           │  │
-│  │  └──────────┴───────────┴─────────┴──────────┘           │  │
-│  │  ⚠️ Mọi query PHẢI có WHERE tenant_id = ?                │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
+```d2 title="Pool: shared compute và database"
+direction: down
+compute: Shared Compute {
+  pipeline: "Request → Extract Tenant ID → Route → Process"
+  p1: Pod 1
+  p2: Pod 2
+  pn: Pod N
+}
+db: "Shared Database\nMọi query phải có WHERE tenant_id = ?" {
+  acme: "acme · ORD-001 · \$100 · paid"
+  beta: "beta · ORD-003 · \$75 · paid"
+}
+compute -> db
 ```
 
 ### Cơ chế cách ly trong Pool
 
-```mermaid
-graph TD
-    A[HTTP Request] --> B[API Gateway]
-    B --> C[Extract Tenant ID]
-    C --> D{Tenant ID hợp lệ?}
-    D -->|Không| E[401 Unauthorized]
-    D -->|Có| F[Set Tenant Context]
-    F --> G[Application Logic]
-    G --> H[ORM / Query Builder]
-    H --> I["Auto-inject: WHERE tenant_id = ?"]
-    I --> J[Database]
-    J --> K[Return tenant-scoped data]
+```d2 title="Cơ chế cách ly trong Pool"
+direction: down
+A: "HTTP Request"
+B: "API Gateway"
+C: "Extract Tenant ID"
+D: "Tenant ID hợp lệ?" {shape: diamond}
+E: "401 Unauthorized"
+F: "Set Tenant Context"
+G: "Application Logic"
+H: "ORM / Query Builder"
+I: "Auto-inject: WHERE tenant_id = ?"
+J: "Database"
+K: "Return tenant-scoped data"
+A -> B
+B -> C
+C -> D
+D -> E: "Không"
+D -> F: "Có"
+F -> G
+G -> H
+H -> I
+I -> J
+J -> K
 ```
 
 **Các kỹ thuật enforce isolation:**
@@ -212,23 +203,18 @@ graph TD
 
 ### Kiến trúc
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                       BRIDGE MODEL                               │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────┐        │
-│  │              Shared Compute Layer                    │        │
-│  │    API Gateway → Tenant Router → Shared Services     │        │
-│  └──────────────────────┬───────────────────────────────┘        │
-│           ┌─────────────┼─────────────┐                          │
-│           ▼             ▼             ▼                          │
-│  ┌──────────────┐ ┌──────────┐ ┌────────────────────┐            │
-│  │   Free Tier  │ │ Pro Tier │ │  Enterprise Tier   │            │
-│  │  Shared DB   │ │ Shared DB│ │  Dedicated DB      │            │
-│  │  (Pool)      │ │ (Schema) │ │  (Silo)            │            │
-│  │  Rate: 100/m │ │ Rate:1K/m│ │  Rate: Unlimited   │            │
-│  └──────────────┘ └──────────┘ └────────────────────┘            │
-└──────────────────────────────────────────────────────────────────┘
+```d2 title="Bridge: cách ly theo tier"
+direction: right
+gw: "API Gateway"
+router: "Tenant Router"
+services: "Shared Services"
+free: "Free · Pool\nShared table\n100 requests/phút"
+pro: "Pro · Schema\nShared DB\n1000 requests/phút"
+ent: "Enterprise · Silo\nDedicated DB\nKhông giới hạn trong ví dụ"
+gw -> router -> services
+services -> free
+services -> pro
+services -> ent
 ```
 
 ### Các kiểu Bridge phổ biến
@@ -250,17 +236,16 @@ graph TD
 
 **② Tiered by Data Sensitivity:**
 
-```mermaid
-graph LR
-    subgraph "Sensitive Data = Silo"
-        PII["PII Data<br/>(Dedicated DB)"]
-        Financial["Financial Data<br/>(Dedicated DB)"]
-    end
-
-    subgraph "Non-Sensitive Data = Pool"
-        Config["App Config<br/>(Shared DB)"]
-        Analytics["Analytics<br/>(Shared DB)"]
-    end
+```d2 title="Các kiểu Bridge phổ biến"
+direction: right
+group1: "Sensitive Data = Silo" {
+  PII: "PII Data\n(Dedicated DB)"
+  Financial: "Financial Data\n(Dedicated DB)"
+}
+group2: "Non-Sensitive Data = Pool" {
+  Config: "App Config\n(Shared DB)"
+  Analytics: "Analytics\n(Shared DB)"
+}
 ```
 
 ### Ưu và Nhược điểm
@@ -293,30 +278,32 @@ graph LR
 
 ### Decision Matrix
 
-```mermaid
-graph TD
-    START[Bắt đầu] --> Q1{Số lượng tenant?}
-    
-    Q1 -->|"< 50"| Q2{Budget per tenant?}
-    Q1 -->|"50-5000"| Q4{Có nhiều tier pricing?}
-    Q1 -->|"> 5000"| Q5{Compliance strict?}
-    
-    Q2 -->|"> $5K/tháng"| SILO["🏢 SILO MODEL"]
-    Q2 -->|"< $5K/tháng"| Q3{Compliance cần strong isolation?}
-    Q3 -->|Có| SILO
-    Q3 -->|Không| BRIDGE["🌉 BRIDGE MODEL"]
-    
-    Q4 -->|Có| BRIDGE
-    Q4 -->|Không| Q6{Workload đồng nhất?}
-    Q6 -->|Có| POOL["🏊 POOL MODEL"]
-    Q6 -->|Không| BRIDGE
-    
-    Q5 -->|Có| BRIDGE
-    Q5 -->|Không| POOL
-
-    style SILO fill:#e74c3c,color:#fff
-    style POOL fill:#2ecc71,color:#fff
-    style BRIDGE fill:#f39c12,color:#fff
+```d2 title="Decision Matrix"
+direction: down
+START: "Bắt đầu"
+Q1: "Số lượng tenant?" {shape: diamond}
+Q2: "Budget per tenant?" {shape: diamond}
+Q4: "Có nhiều tier pricing?" {shape: diamond}
+Q5: "Compliance strict?" {shape: diamond}
+SILO: "🏢 SILO MODEL"
+Q3: "Compliance cần strong isolation?" {shape: diamond}
+BRIDGE: "🌉 BRIDGE MODEL"
+Q6: "Workload đồng nhất?" {shape: diamond}
+POOL: "🏊 POOL MODEL"
+START -> Q1
+Q1 -> Q2: "< 50"
+Q1 -> Q4: "50-5000"
+Q1 -> Q5: "> 5000"
+Q2 -> SILO: "> \$5K/tháng"
+Q2 -> Q3: "< \$5K/tháng"
+Q3 -> SILO: "Có"
+Q3 -> BRIDGE: "Không"
+Q4 -> BRIDGE: "Có"
+Q4 -> Q6: "Không"
+Q6 -> POOL: "Có"
+Q6 -> BRIDGE: "Không"
+Q5 -> BRIDGE: "Có"
+Q5 -> POOL: "Không"
 ```
 
 ### Ví dụ áp dụng thực tế

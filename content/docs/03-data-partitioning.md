@@ -7,23 +7,29 @@ description: "Các chiến lược phân tách dữ liệu trong multi-tenant: D
 
 Chiến lược phân tách dữ liệu (Data Partitioning) là **quyết định quan trọng nhất** khi xây dựng hệ thống multi-tenant. Nó ảnh hưởng trực tiếp đến isolation, performance, cost và khả năng scale.
 
+```d2 title="Ba chiến lược phân vùng dữ liệu"
+direction: right
+db: "Database-per-Tenant\nCách ly cao / Chi phí cao" {
+  a: "DB A" {shape: cylinder}
+  b: "DB B" {shape: cylinder}
+  c: "DB C" {shape: cylinder}
+  d: "DB D" {shape: cylinder}
+}
+schema: "Schema-per-Tenant\nCách ly và chi phí trung bình" {
+  instance: "Shared DB Instance" {
+    a: "Schema A"
+    b: "Schema B"
+    c: "Schema C"
+    d: "Schema D"
+  }
+}
+rls: "Row-Level Security\nCách ly logic / Chi phí thấp" {
+  table: "Shared table\ntenant_id = A / B / C"
+}
 ```
-                    DATA PARTITIONING SPECTRUM
 
-  Database-per-Tenant     Schema-per-Tenant     Row-Level Security
-  ┌─────────────┐         ┌─────────────┐       ┌─────────────────┐
-  │ ┌───┐ ┌───┐ │         │ DB Instance │       │   DB Instance   │
-  │ │DB │ │DB │ │         │ ┌────┬────┐ │       │ ┌─────────────┐ │
-  │ │ A │ │ B │ │         │ │Sch │Sch │ │       │ │  Shared     │ │
-  │ └───┘ └───┘ │         │ │ A  │ B  │ │       │ │  Table      │ │
-  │ ┌───┐ ┌───┐ │         │ ├────┼────┤ │       │ │ tenant_id=A │ │
-  │ │DB │ │DB │ │         │ │Sch │Sch │ │       │ │ tenant_id=B │ │
-  │ │ C │ │ D │ │         │ │ C  │ D  │ │       │ │ tenant_id=C │ │
-  │ └───┘ └───┘ │         │ └────┴────┘ │       │ └─────────────┘ │
-  └─────────────┘         └─────────────┘       └─────────────────┘
-  Max Isolation            Medium                Min Isolation
-  Max Cost                 Medium Cost           Min Cost
-```
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
 
 ## Database-per-Tenant
 
@@ -31,31 +37,29 @@ Mỗi tenant có **database instance riêng biệt hoàn toàn**. Đây là chi�
 
 #### Kiến trúc
 
-```
-┌──────────────────────────────────────────────────────┐
-│                 Application Layer                    │
-│                                                      │
-│  Tenant Router: tenant_id → connection string        │
-│                                                      │
-│  ┌──────────────────────────────────────────────┐    │
-│  │           Connection Pool Manager            │    │
-│  │  tenant_a → jdbc:postgresql://db-a:5432/app  │    │
-│  │  tenant_b → jdbc:postgresql://db-b:5432/app  │    │
-│  │  tenant_c → jdbc:postgresql://db-c:5432/app  │    │
-│  └──────┬──────────┬──────────┬─────────────────┘    │
-│         │          │          │                      │
-└─────────┼──────────┼──────────┼──────────────────────┘
-          │          │          │
-   ┌──────┴───┐ ┌────┴─────┐ ┌──┴─────────┐
-   │ DB: app  │ │ DB: app  │ │ DB: app    │
-   │ Host:db-a│ │ Host:db-b│ │ Host:db-c  │
-   │ Tenant A │ │ Tenant B │ │ Tenant C   │
-   └──────────┘ └──────────┘ └────────────┘
+```d2 title="Database-per-Tenant: định tuyến connection theo tenant"
+direction: down
+app: Application Layer {
+  router: "Tenant Router\ntenant_id → connection string"
+  pool: Connection Pool Manager
+  router -> pool
+}
+a: "Tenant A\njdbc:postgresql://db-a:5432/app" {shape: cylinder}
+b: "Tenant B\njdbc:postgresql://db-b:5432/app" {shape: cylinder}
+c: "Tenant C\njdbc:postgresql://db-c:5432/app" {shape: cylinder}
+app.pool -> a
+app.pool -> b
+app.pool -> c
+a.icon: ../assets/d2/icons/postgresql.svg
+b.icon: ../assets/d2/icons/postgresql.svg
+c.icon: ../assets/d2/icons/postgresql.svg
+app.pool.tooltip: "Mở code triển khai trong Source Explorer"
+app.pool.link: "./?source=data-partitioning&file=src/db/TenantConnectionProvider.java"
 ```
 
 #### Implementation — Tenant Connection Routing
 
-```java
+```java source="data-partitioning" file="src/db/TenantConnectionProvider.java"
 // TenantConnectionProvider.java
 @Component
 public class TenantConnectionProvider {
@@ -114,27 +118,25 @@ Tất cả tenant chia sẻ **cùng một database instance**, nhưng mỗi tena
 
 #### Kiến trúc
 
-```
-┌──────────────────────────────────────────────┐
-│            PostgreSQL Instance               │
-│                                              │
-│  ┌──────────────┐  ┌──────────────┐          │
-│  │ Schema: acme │  │ Schema: beta │          │
-│  │              │  │              │          │
-│  │  ┌────────┐  │  │  ┌────────┐  │          │
-│  │  │ users  │  │  │  │ users  │  │ . . .    │
-│  │  │ orders │  │  │  │ orders │  │          │
-│  │  │products│  │  │  │products│  │          │
-│  │  └────────┘  │  │  └────────┘  │          │
-│  └──────────────┘  └──────────────┘          │
-│                                              │
-│  Shared resources: connections, memory, CPU  │
-└──────────────────────────────────────────────┘
+```d2 title="Schema-per-Tenant trong cùng PostgreSQL instance"
+direction: right
+db: "PostgreSQL Instance — dùng chung connections, memory, CPU" {
+  acme: "Schema: acme" {
+    users: "users"
+    orders: "orders"
+    products: "products"
+  }
+  beta: "Schema: beta" {
+    users: "users"
+    orders: "orders"
+    products: "products"
+  }
+}
 ```
 
 #### Implementation — PostgreSQL Schema Switching
 
-```sql
+```sql source="data-partitioning" file="sql/tenant-schemas.sql"
 -- Tạo schema cho tenant mới
 CREATE SCHEMA tenant_acme;
 CREATE SCHEMA tenant_beta;
@@ -157,7 +159,7 @@ SET search_path TO tenant_acme;
 SELECT * FROM users;  -- Tự động query tenant_acme.users
 ```
 
-```java
+```java source="data-partitioning" file="src/db/TenantSchemaInterceptor.java"
 // Application-level schema switching (Spring Boot + Hibernate)
 @Component
 public class TenantSchemaInterceptor implements HandlerInterceptor {
@@ -231,7 +233,7 @@ Tất cả tenant chia sẻ **cùng database, schema, và table**. Phân biệt 
 
 #### Implementation — PostgreSQL Row-Level Security (RLS)
 
-```sql
+```sql source="data-partitioning" file="sql/rls-orders.sql"
 -- Bước 1: Tạo table với tenant_id
 CREATE TABLE orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -374,55 +376,35 @@ Kết hợp nhiều strategies cho các loại data khác nhau hoặc các tier 
 
 #### Tiered Partitioning
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    HYBRID PARTITIONING                       │
-│                                                              │
-│  Free Tier tenants (1000+):                                  │
-│  ┌────────────────────────────────────────┐                  │
-│  │  Shared Table + Row-Level Security     │                  │
-│  │  (Pool model, tenant_id column)        │                  │
-│  └────────────────────────────────────────┘                  │
-│                                                              │
-│  Pro Tier tenants (100-500):                                 │
-│  ┌────────────────────────────────────────┐                  │
-│  │  Schema-per-Tenant                     │                  │
-│  │  (Dedicated schema, shared DB instance)│                  │
-│  └────────────────────────────────────────┘                  │
-│                                                              │
-│  Enterprise Tier tenants (10-50):                            │
-│  ┌────────────────────────────────────────┐                  │
-│  │  Database-per-Tenant                   │                  │
-│  │  (Dedicated DB, possibly dedicated     │                  │
-│  │   instance in specific region)         │                  │
-│  └────────────────────────────────────────┘                  │
-└──────────────────────────────────────────────────────────────┘
+```d2 title="Hybrid partitioning theo tier"
+direction: right
+free: "Free · 1000+ tenants\nShared Table + RLS\ntenant_id column"
+pro: "Pro · 100–500 tenants\nSchema-per-Tenant\nShared DB instance"
+ent: "Enterprise · 10–50 tenants\nDatabase-per-Tenant\nInstance và region riêng nếu cần"
 ```
 
 #### Partitioning by Data Type
 
-```mermaid
-graph LR
-    subgraph "Sensitive = Silo DB"
-        PII["PII / Credentials<br/>DB-per-Tenant"]
-        Payment["Payment Data<br/>DB-per-Tenant"]
-    end
-
-    subgraph "Transactional = Schema"
-        Orders["Orders<br/>Schema-per-Tenant"]
-        Inventory["Inventory<br/>Schema-per-Tenant"]
-    end
-
-    subgraph "Operational = Shared"
-        Logs["Audit Logs<br/>Shared + RLS"]
-        Config["Config<br/>Shared + RLS"]
-        Analytics["Analytics<br/>Shared + RLS"]
-    end
+```d2 title="Partitioning by Data Type"
+direction: right
+group1: "Sensitive = Silo DB" {
+  PII: "PII / Credentials\nDB-per-Tenant"
+  Payment: "Payment Data\nDB-per-Tenant"
+}
+group2: "Transactional = Schema" {
+  Orders: "Orders\nSchema-per-Tenant"
+  Inventory: "Inventory\nSchema-per-Tenant"
+}
+group3: "Operational = Shared" {
+  Logs: "Audit Logs\nShared + RLS"
+  Config: "Config\nShared + RLS"
+  Analytics: "Analytics\nShared + RLS"
+}
 ```
 
 #### Implementation — Tenant Router
 
-```java
+```java source="data-partitioning" file="src/db/DataPartitionRouter.java"
 @Component
 public class DataPartitionRouter {
 
@@ -468,27 +450,29 @@ public class DataPartitionRouter {
 
 #### Decision Flowchart
 
-```mermaid
-graph TD
-    S[Chọn Data Partition Strategy] --> Q1{Số tenants?}
-    
-    Q1 -->|"< 500"| Q2{Budget/tenant > $500/tháng?}
-    Q2 -->|Có| DB["DB-per-Tenant ✅"]
-    Q2 -->|Không| Q3{Cần custom schema?}
-    Q3 -->|Có| SCHEMA["Schema-per-Tenant ✅"]
-    Q3 -->|Không| RLS["Row-Level Security ✅"]
-    
-    Q1 -->|"500-5000"| Q4{Compliance strict?}
-    Q4 -->|Có| SCHEMA
-    Q4 -->|Không| Q5{Workload variance cao?}
-    Q5 -->|Có| SCHEMA
-    Q5 -->|Không| RLS
-    
-    Q1 -->|"> 5000"| RLS
-
-    style DB fill:#e74c3c,color:#fff
-    style SCHEMA fill:#f39c12,color:#fff
-    style RLS fill:#2ecc71,color:#fff
+```d2 title="Decision Flowchart"
+direction: down
+S: "Chọn Data Partition Strategy"
+Q1: "Số tenants?" {shape: diamond}
+Q2: "Budget/tenant > \$500/tháng?" {shape: diamond}
+DB: "DB-per-Tenant ✅"
+Q3: "Cần custom schema?" {shape: diamond}
+SCHEMA: "Schema-per-Tenant ✅"
+RLS: "Row-Level Security ✅"
+Q4: "Compliance strict?" {shape: diamond}
+Q5: "Workload variance cao?" {shape: diamond}
+S -> Q1
+Q1 -> Q2: "< 500"
+Q2 -> DB: "Có"
+Q2 -> Q3: "Không"
+Q3 -> SCHEMA: "Có"
+Q3 -> RLS: "Không"
+Q1 -> Q4: "500-5000"
+Q4 -> SCHEMA: "Có"
+Q4 -> Q5: "Không"
+Q5 -> SCHEMA: "Có"
+Q5 -> RLS: "Không"
+Q1 -> RLS: "> 5000"
 ```
 
 

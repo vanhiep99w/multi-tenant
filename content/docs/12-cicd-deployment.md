@@ -7,24 +7,17 @@ description: "Multi-tenant CI/CD pipeline, canary deployment per tenant, feature
 
 CI/CD cho multi-tenant phải đảm bảo **deployment an toàn** — một lỗi deploy có thể ảnh hưởng tất cả tenant. Strategy: **progressive rollout** — deploy từng nhóm tenant, không deploy tất cả cùng lúc.
 
+```d2 title="Tách deploy code khỏi kích hoạt feature"
+direction: right
+n0: "① Schema Migration\nFlyway theo tenant schema\nBackward compatible"
+n1: "② Feature Flags\nToggle theo tenant / tier\nBật dần sau khi deploy code"
+n2: "③ Canary Deploy\n5% → 25% → 100% tenants\nAuto rollback khi lỗi"
+n0 -> n1
+n1 -> n2
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│              MULTI-TENANT DEPLOYMENT STRATEGY                    │
-│                                                                  │
-│  ① Schema Migration    ② Feature Flags    ③ Canary Deploy      │
-│  ┌──────────────┐     ┌──────────────┐   ┌──────────────┐        │
-│  │ Flyway per   │     │ Toggle per   │   │ 5% tenants   │        │
-│  │ tenant schema│     │ tenant/tier  │   │ → 25% → 100% │        │
-│  │ + backward   │     │ + gradual    │   │ + auto rollbk│        │
-│  │   compatible │     │   enable     │   │   on error   │        │
-│  └──────────────┘     └──────────────┘   └──────────────┘        │
-│                                                                  │
-│  Key Principle:                                                  │
-│  "Deploy code first, enable feature later"                       │
-│  → Separate deployment from feature activation                   │
-│  → Gives control over which tenants see new features             │
-└──────────────────────────────────────────────────────────────────┘
-```
+
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
 
 ## Schema Migration cho Multi-Tenant
 
@@ -32,28 +25,34 @@ Schema migration cho multi-tenant phải xử lý **hàng trăm schemas** đồn
 
 #### Migration Architecture
 
-```mermaid
-graph TD
-    subgraph "Migration Pipeline"
-        CI[CI/CD Pipeline] --> VAL[Validate Migration]
-        VAL --> COMPAT[Check Backward<br/>Compatibility]
-        COMPAT --> POOL{Tenant Model?}
-
-        POOL -->|Pool: Shared DB| SHARED[Migrate Shared Schema]
-        POOL -->|Pool: Schema-per-tenant| BATCH[Batch Migrate<br/>All Tenant Schemas]
-        POOL -->|Silo: Dedicated DB| PARALLEL[Parallel Migrate<br/>Each Tenant DB]
-
-        SHARED --> VERIFY[Verify Migration]
-        BATCH --> VERIFY
-        PARALLEL --> VERIFY
-
-        VERIFY --> DONE[Migration Complete]
-    end
+```d2 title="Migration Architecture"
+direction: down
+group1: "Migration Pipeline" {
+  CI: "CI/CD Pipeline"
+  VAL: "Validate Migration"
+  COMPAT: "Check Backward\nCompatibility"
+  POOL: "Tenant Model?" {shape: diamond}
+  SHARED: "Migrate Shared Schema"
+  BATCH: "Batch Migrate\nAll Tenant Schemas"
+  PARALLEL: "Parallel Migrate\nEach Tenant DB"
+  VERIFY: "Verify Migration"
+  DONE: "Migration Complete"
+}
+group1.CI -> group1.VAL
+group1.VAL -> group1.COMPAT
+group1.COMPAT -> group1.POOL
+group1.POOL -> group1.SHARED: "Pool: Shared DB"
+group1.POOL -> group1.BATCH: "Pool: Schema-per-tenant"
+group1.POOL -> group1.PARALLEL: "Silo: Dedicated DB"
+group1.SHARED -> group1.VERIFY
+group1.BATCH -> group1.VERIFY
+group1.PARALLEL -> group1.VERIFY
+group1.VERIFY -> group1.DONE
 ```
 
 #### Flyway — Multi-Tenant Schema Migration
 
-```java
+```java source="cicd-deployment" file="src/migration/MultiTenantMigrationService.java"
 @Service
 public class MultiTenantMigrationService {
 
@@ -152,7 +151,7 @@ public class MultiTenantMigrationService {
 
 #### Migration CI Pipeline
 
-```yaml
+```yaml source="cicd-deployment" file=".github/workflows/migration.yaml"
 # .github/workflows/migration.yml
 name: Schema Migration
 
@@ -202,29 +201,24 @@ Feature flags cho phép **deploy code trước, enable feature sau** — kiểm 
 
 #### Feature Flag Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│              FEATURE FLAG LIFECYCLE                              │
-│                                                                  │
-│  Step 1: Code deployed (feature behind flag)                     │
-│  Step 2: Enable for internal testing tenant                      │
-│  Step 3: Enable for beta tenants (5%)                            │
-│  Step 4: Enable for Pro tier (25%)                               │
-│  Step 5: Enable for ALL tenants (100%)                           │
-│  Step 6: Remove flag, feature is permanent                       │
-│                                                                  │
-│  ┌─────┐  ┌─────────┐  ┌──────┐  ┌──────┐  ┌─────┐  ┌──────┐     │
-│  │CODED│→ │INTERNAL │→ │ BETA │→ │ PRO  │→ │ ALL │→ │PERM. │     │
-│  │     │  │ ONLY    │  │  5%  │  │ 25%  │  │100% │  │      │     │
-│  └─────┘  └─────────┘  └──────┘  └──────┘  └─────┘  └──────┘     │
-│                                                                  │
-│  Duration per step: 1-7 days (depending on risk)                 │
-└──────────────────────────────────────────────────────────────────┘
+```d2 title="Vòng đời feature flag — mỗi bước thường 1–7 ngày theo rủi ro"
+direction: down
+n0: "CODED\nFeature sau flag"
+n1: "INTERNAL\nTenant kiểm thử nội bộ"
+n2: "BETA\n5% tenants"
+n3: "PRO\n25% tenants"
+n4: "ALL\n100% tenants"
+n5: "PERMANENT\nGỡ flag"
+n0 -> n1
+n1 -> n2
+n2 -> n3
+n3 -> n4
+n4 -> n5
 ```
 
 #### Implementation — Feature Flag Service
 
-```java
+```java source="cicd-deployment" file="src/features/FeatureFlagService.java"
 @Service
 public class FeatureFlagService {
 
@@ -318,7 +312,7 @@ public class OrderService {
 
 #### Feature Flag Admin API
 
-```java
+```java source="cicd-deployment" file="src/features/FeatureFlagAdminController.java"
 @RestController
 @RequestMapping("/admin/features")
 @PreAuthorize("hasRole('PLATFORM_ADMIN')")
@@ -358,45 +352,38 @@ public class FeatureFlagAdminController {
     }
 }
 
+```
+
 ## Canary Deployment per Tenant
 
 Canary deployment trong multi-tenant cho phép **deploy phiên bản mới cho 1 nhóm tenant trước**, monitor, rồi mới mở rộng.
 
 #### Canary Strategy — Tenant-based Traffic Routing
 
-```mermaid
-graph LR
-    subgraph "Traffic Router"
-        LB[Load Balancer<br/>Envoy / ALB]
-    end
-
-    subgraph "Canary Group — 5% tenants"
-        V2A[v2.1.0 Pod A]
-        V2B[v2.1.0 Pod B]
-    end
-
-    subgraph "Stable Group — 95% tenants"
-        V1A[v2.0.0 Pod A]
-        V1B[v2.0.0 Pod B]
-        V1C[v2.0.0 Pod C]
-    end
-
-    LB -->|"tenant=acme,beta"| V2A
-    LB -->|"tenant=acme,beta"| V2B
-    LB -->|"all other tenants"| V1A
-    LB -->|"all other tenants"| V1B
-    LB -->|"all other tenants"| V1C
-
-    style V2A fill:#e8f5e9
-    style V2B fill:#e8f5e9
-    style V1A fill:#e3f2fd
-    style V1B fill:#e3f2fd
-    style V1C fill:#e3f2fd
+```d2 title="Canary Strategy — Tenant-based Traffic Routing"
+direction: right
+group1: "Traffic Router" {
+  LB: "Load Balancer\nEnvoy / ALB"
+}
+group2: "Canary Group — 5% tenants" {
+  V2A: "v2.1.0 Pod A"
+  V2B: "v2.1.0 Pod B"
+}
+group3: "Stable Group — 95% tenants" {
+  V1A: "v2.0.0 Pod A"
+  V1B: "v2.0.0 Pod B"
+  V1C: "v2.0.0 Pod C"
+}
+group1.LB -> group2.V2A: "tenant=acme,beta"
+group1.LB -> group2.V2B: "tenant=acme,beta"
+group1.LB -> group3.V1A: "all other tenants"
+group1.LB -> group3.V1B: "all other tenants"
+group1.LB -> group3.V1C: "all other tenants"
 ```
 
 #### Argo Rollouts — Tenant-based Canary
 
-```yaml
+```yaml source="cicd-deployment" file="k8s/rollout.yaml"
 apiVersion: argoproj.io/v1alpha1
 kind: Rollout
 metadata:
@@ -496,7 +483,7 @@ spec:
 
 #### Istio VirtualService — Tenant-based Routing
 
-```yaml
+```yaml source="cicd-deployment" file="k8s/virtual-service.yaml"
 apiVersion: networking.istio.io/v1
 kind: VirtualService
 metadata:
@@ -531,34 +518,44 @@ Rollback trong multi-tenant phải **nhanh và chính xác** — chỉ rollback 
 
 #### Rollback Decision Tree
 
-```mermaid
-graph TD
-    INCIDENT[Incident Detected] --> SCOPE{Scope Assessment}
-
-    SCOPE -->|Single tenant| TENANT[Tenant-level Rollback]
-    SCOPE -->|Multiple tenants| MULTI[Multi-tenant Rollback]
-    SCOPE -->|All tenants| FULL[Full Rollback]
-
-    TENANT --> T1[Disable feature flag<br/>for this tenant]
-    T1 --> T2[Route tenant to<br/>stable version]
-    T2 --> T3[Investigate root cause]
-
-    MULTI --> M1[Pause canary rollout]
-    M1 --> M2[Abort Argo Rollout]
-    M2 --> M3[All traffic → stable version]
-
-    FULL --> F1[Emergency: rollback<br/>entire deployment]
-    F1 --> F2[Restore previous<br/>Docker image tag]
-    F2 --> F3[Rollback DB migration<br/>if needed]
-
-    T3 --> POSTMORTEM[Post-mortem]
-    M3 --> POSTMORTEM
-    F3 --> POSTMORTEM
+```d2 title="Rollback Decision Tree"
+direction: down
+INCIDENT: "Incident Detected"
+SCOPE: "Scope Assessment" {shape: diamond}
+TENANT: "Tenant-level Rollback"
+MULTI: "Multi-tenant Rollback"
+FULL: "Full Rollback"
+T1: "Disable feature flag\nfor this tenant"
+T2: "Route tenant to\nstable version"
+T3: "Investigate root cause"
+M1: "Pause canary rollout"
+M2: "Abort Argo Rollout"
+M3: "All traffic → stable version"
+F1: "Emergency: rollback\nentire deployment"
+F2: "Restore previous\nDocker image tag"
+F3: "Rollback DB migration\nif needed"
+POSTMORTEM: "Post-mortem"
+INCIDENT -> SCOPE
+SCOPE -> TENANT: "Single tenant"
+SCOPE -> MULTI: "Multiple tenants"
+SCOPE -> FULL: "All tenants"
+TENANT -> T1
+T1 -> T2
+T2 -> T3
+MULTI -> M1
+M1 -> M2
+M2 -> M3
+FULL -> F1
+F1 -> F2
+F2 -> F3
+T3 -> POSTMORTEM
+M3 -> POSTMORTEM
+F3 -> POSTMORTEM
 ```
 
 #### Implementation — Multi-Level Rollback
 
-```java
+```java source="cicd-deployment" file="src/deployment/RollbackService.java"
 @Service
 public class RollbackService {
 
@@ -653,7 +650,7 @@ public class RollbackService {
 
 #### Automated Rollback Triggers
 
-```yaml
+```yaml source="cicd-deployment" file="config/rollback-alerts.yaml"
 # prometheus-alerts.yml
 groups:
   - name: deployment_rollback

@@ -7,50 +7,45 @@ description: "Tenant-aware AuthN/AuthZ, RBAC trong multi-tenant, cross-tenant ac
 
 Trong hệ thống multi-tenant, AuthN (xác thực) và AuthZ (phân quyền) phải trả lời **3 câu hỏi** cùng lúc:
 
+```d2 title="Authentication → tenant → authorization"
+direction: right
+n0: "① AuthN — Bạn là ai?\nEmail / Password / MFA / SSO"
+n1: "② Tenant Resolution — Tenant nào?\nJWT claim / Subdomain / Header"
+n2: "③ AuthZ — Được làm gì TRONG tenant?\nRBAC / ABAC scoped theo tenant_id"
+n0 -> n1
+n1 -> n2
+n0.tooltip: "Mở code triển khai trong Source Explorer"
+n0.link: "./?source=authentication&file=src/security/TenantAuthFilter.java"
+n2.tooltip: "Mở code triển khai trong Source Explorer"
+n2.link: "./?source=authentication&file=src/security/TenantAuthorizationService.java"
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│              MULTI-TENANT AUTH FLOW                             │
-│                                                                 │
-│  ① WHO are you?        → Authentication (AuthN)                │
-│     User identity: email, password, MFA, SSO                    │
-│                                                                 │
-│  ② WHICH tenant?       → Tenant Resolution                     │
-│     Tenant context: JWT claim, subdomain, header                │
-│                                                                 │
-│  ③ WHAT can you do?    → Authorization (AuthZ)                 │
-│     Permissions: RBAC, ABAC, scoped to tenant                   │
-│                                                                 │
-│  ⚠️ AuthZ phải LUÔN scope theo tenant:                          │
-│     "User X có quyền Y TRONG tenant Z" — không phải chỉ "X có Y"│
-└─────────────────────────────────────────────────────────────────┘
-```
+
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
 
 ## Tenant-aware AuthN/AuthZ
 
 #### Authentication Flow — Multi-Tenant
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant App as Frontend App
-    participant IDP as Identity Provider<br/>(Cognito/Auth0/Keycloak)
-    participant API as API Gateway
-    participant Svc as Backend Service
-
-    User->>App: Login (email + password)
-    App->>IDP: POST /oauth/token
-    Note over IDP: Verify credentials<br/>Lookup user → tenant mapping<br/>Issue JWT with tenant claims
-
-    IDP-->>App: JWT Token
-    Note over App: JWT contains:<br/>sub: user-123<br/>tenant_id: acme<br/>roles: [admin]
-
-    App->>API: GET /api/orders<br/>Authorization: Bearer {JWT}
-    API->>API: Validate JWT signature + expiry
-    API->>API: Extract tenant_id from claims
-    API->>Svc: Forward + X-Tenant-ID: acme
-    Svc->>Svc: Set TenantContext = "acme"
-    Svc-->>API: Tenant-scoped response
-    API-->>App: 200 OK
+```d2 title="Authentication và lựa chọn tenant"
+shape: sequence_diagram
+user: User
+app: Frontend App
+idp: "Identity Provider\nCognito / Auth0 / Keycloak"
+api: API Gateway
+service: Backend Service
+user -> app: Login — email + password
+app -> idp: POST /oauth/token
+idp."Verify credentials → lookup user/tenant → issue JWT"
+idp -> app: JWT Token {style.stroke-dash: 4}
+app."Claims: sub=user-123 / tenant_id=acme / roles=admin"
+app -> api: "GET /api/orders · Authorization: Bearer JWT"
+api -> api: Validate signature + expiry
+api -> api: Extract tenant_id
+api -> service: "Forward + X-Tenant-ID: acme"
+service -> service: Set TenantContext = acme
+service -> api: Tenant-scoped response {style.stroke-dash: 4}
+api -> app: 200 OK {style.stroke-dash: 4}
 ```
 
 #### JWT Structure cho Multi-Tenant
@@ -99,45 +94,36 @@ sequenceDiagram
 
 **① Shared Identity Provider (1 IDP cho tất cả tenant)**
 
-```
-┌──────────────────────────────────────────────────────┐
-│              Shared Identity Provider                │
-│              (Cognito / Auth0 / Keycloak)            │
-│                                                      │
-│  ┌──────────────────────────────────────────────┐    │
-│  │              Single User Pool                │    │
-│  │                                              │    │
-│  │  User: john@acme.com → tenant_id: acme       │    │
-│  │  User: jane@beta.com → tenant_id: beta       │    │
-│  │  User: bob@acme.com  → tenant_id: acme       │    │
-│  │                                              │    │
-│  │Tenant mapping: user_attributes / app_metadata│    │
-│  └──────────────────────────────────────────────┘    │
-│                                                      │
-│  ✅ Đơn giản, 1 pool to manage                       │
-│  ❌ Rủi ro: user xem data tenant khác nếu bug        │
-│  ❌ SSO config phải validate tenant                  │
-└──────────────────────────────────────────────────────┘
+```d2 title="Shared Identity Provider"
+direction: down
+idp: "Shared IdP — Cognito / Auth0 / Keycloak" {
+  pool: "Single User Pool — mapping qua attributes / app_metadata" {
+    john: "john@acme.com → acme"
+    jane: "jane@beta.com → beta"
+    bob: "bob@acme.com → acme"
+  }
+}
+tradeoff: "Một pool để quản lý\nBug mapping có thể lộ dữ liệu tenant khác\nSSO phải validate tenant"
+idp -> tradeoff
 ```
 
 **② Per-Tenant Identity Provider (1 IDP/pool per tenant)**
 
-```
-┌──────────────────────────────────────────────────────┐
-│           Per-Tenant User Pools                      │
-│                                                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
-│  │  Pool: ACME  │  │  Pool: BETA  │  │ Pool:GAMMA │  │
-│  │              │  │              │  │            │  │
-│  │  john@acme   │  │  jane@beta   │  │ bob@gamma  │  │
-│  │  bob@acme    │  │  alice@beta  │  │ sue@gamma  │  │
-│  └──────────────┘  └──────────────┘  └────────────┘  │
-│                                                      │
-│  ✅ Isolation mạnh: mỗi tenant có IdP riêng          │
-│  ✅ Tenant có thể tự cấu hình SSO (SAML/OIDC)        │
-│  ❌ Quản lý N user pools → operational overhead      │
-│  ❌ User thuộc nhiều tenant → phức tạp               │
-└──────────────────────────────────────────────────────┘
+```d2 title="Mỗi tenant một User Pool"
+direction: right
+acme: "Pool: ACME" {
+  0: "john@acme"
+  1: "bob@acme"
+}
+beta: "Pool: BETA" {
+  0: "jane@beta"
+  1: "alice@beta"
+}
+gamma: "Pool: GAMMA" {
+  0: "bob@gamma"
+  1: "sue@gamma"
+}
+tradeoff: "SSO riêng (SAML/OIDC), cách ly theo pool\nĐổi lại: quản lý N pools và user đa tenant phức tạp"
 ```
 
 **So sánh:**
@@ -153,7 +139,7 @@ sequenceDiagram
 
 #### Tenant-aware Authentication Middleware
 
-```java
+```java source="authentication" file="src/security/TenantAuthFilter.java"
 @Component
 public class TenantAuthFilter extends OncePerRequestFilter {
 
@@ -217,25 +203,21 @@ public class TenantAuthFilter extends OncePerRequestFilter {
 
 Nhiều SaaS (Slack, Notion) cho phép user thuộc **nhiều tenant**. Điều này cần **tenant selector** flow:
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant App
-    participant IDP as Auth Server
-    participant API
-
-    User->>App: Login (email + password)
-    App->>IDP: Authenticate
-    IDP-->>App: JWT (sub: user-123, tenants: [acme, beta])
-    Note over App: User thuộc 2 tenants
-
-    App->>App: Hiển thị Tenant Selector
-    User->>App: Chọn "ACME Corp"
-
-    App->>IDP: POST /token/switch<br/>{target_tenant: "acme"}
-    IDP-->>App: New JWT (tenant_id: acme)
-
-    App->>API: GET /api/orders<br/>Bearer: {JWT with tenant=acme}
+```d2 title="Authentication và lựa chọn tenant"
+shape: sequence_diagram
+user: User
+app: App
+idp: Auth Server
+api: API
+user -> app: Login — email + password
+app -> idp: Authenticate
+idp -> app: "JWT: sub=user-123, tenants=[acme,beta]" {style.stroke-dash: 4}
+app."User thuộc 2 tenants"
+app -> app: Hiển thị Tenant Selector
+user -> app: Chọn ACME Corp
+app -> idp: "POST /token/switch · target_tenant=acme"
+idp -> app: "JWT mới: tenant_id=acme" {style.stroke-dash: 4}
+app -> api: "GET /api/orders · Bearer JWT tenant=acme"
 ```
 
 ```java
@@ -265,36 +247,26 @@ public TokenResponse switchTenant(
 
 #### Mô hình RBAC Multi-Tenant
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                  MULTI-TENANT RBAC                             │
-│                                                                │
-│  ┌──────────────────────────────────┐                          │
-│  │        Platform Level            │                          │
-│  │  Super Admin → quản lý tất cả    │                          │
-│  │  tenant, billing, system config  │                          │
-│  └──────────────┬───────────────────┘                          │
-│                 │                                              │
-│    ┌────────────┼────────────┐                                 │
-│    ▼            ▼            ▼                                 │
-│  ┌──────────┐┌──────────┐┌──────────┐                          │
-│  │ Tenant A ││ Tenant B ││ Tenant C │                          │
-│  │          ││          ││          │                          │
-│  │ Roles:   ││ Roles:   ││ Roles:   │                          │
-│  │ • Owner  ││ • Owner  ││ • Owner  │                          │
-│  │ • Admin  ││ • Admin  ││ • Admin  │                          │
-│  │ • Editor ││ • Member ││ • Viewer │   ← Roles có thể khác    │
-│  │ • Viewer ││ • Guest  ││          │     nhau per tenant      │
-│  └──────────┘└──────────┘└──────────┘                          │
-│                                                                │
-│  User John: Admin@TenantA, Member@TenantB                      │
-│  User Jane: Owner@TenantB, Viewer@TenantC                      │
-└────────────────────────────────────────────────────────────────┘
+```d2 title="RBAC: quyền của user được scope trong từng tenant"
+direction: down
+platform: "Platform Super Admin\nQuản lý tenant, billing, system config"
+a: "Tenant A\nOwner / Admin / Editor / Viewer"
+b: "Tenant B\nOwner / Admin / Member / Guest"
+c: "Tenant C\nOwner / Admin / Viewer"
+john: "John\nAdmin@A, Member@B"
+jane: "Jane\nOwner@B, Viewer@C"
+platform -> a
+platform -> b
+platform -> c
+john -> a: Admin
+john -> b: Member
+jane -> b: Owner
+jane -> c: Viewer
 ```
 
 #### Database Schema cho RBAC Multi-Tenant
 
-```sql
+```sql source="authentication" file="sql/rbac-schema.sql"
 -- Bảng tenant
 CREATE TABLE tenants (
     id VARCHAR(50) PRIMARY KEY,
@@ -355,28 +327,24 @@ CREATE INDEX idx_membership_tenant ON tenant_memberships(tenant_id);
 CREATE INDEX idx_membership_user ON tenant_memberships(user_id);
 ```
 
-```
-Entity Relationship:
-┌────────┐    ┌────────────────────┐    ┌──────────┐
-│  User  │───▶│ tenant_memberships │◀───│  Tenant  │
-│        │    │ (user, tenant,role)│    │          │
-└────────┘    └─────────┬──────────┘    └──────────┘
-                        │
-                   ┌────▼────┐    ┌───────────────────┐
-                   │  Role   │───▶│ role_permissions  │
-                   │         │    │ (role, permission)│
-                   └─────────┘    └────────┬──────────┘
-                                           │
-                                    ┌──────▼──────┐
-                                    │ Permission  │
-                                    │(resource,   │
-                                    │ action)     │
-                                    └─────────────┘
+```d2 title="Quan hệ RBAC Multi-Tenant"
+direction: right
+user: User
+tenant: Tenant
+membership: "tenant_memberships\n(user, tenant, role)"
+role: Role
+role_permission: "role_permissions\n(role, permission)"
+permission: "Permission\n(resource, action)"
+user -> membership: 1:N
+tenant -> membership: 1:N
+membership -> role: N:1
+role -> role_permission: 1:N
+role_permission -> permission: N:1
 ```
 
 #### Default Roles — Template
 
-```java
+```java source="authentication" file="src/security/DefaultRole.java"
 // Hệ thống roles mặc định cho mọi tenant
 public enum DefaultRole {
 
@@ -407,7 +375,7 @@ public enum DefaultRole {
 
 #### Authorization Check — Implementation
 
-```java
+```java source="authentication" file="src/security/TenantAuthorizationService.java"
 @Component
 public class TenantAuthorizationService {
 
@@ -549,7 +517,7 @@ Mặc định, mọi truy cập **phải bị giới hạn trong tenant hiện t
 └─────────────────────────────────────────────────────────┘
 ```
 
-```java
+```java source="authentication" file="src/security/CrossTenantAccessService.java"
 @Component
 public class CrossTenantAccessService {
 
@@ -609,22 +577,19 @@ public List<Order> viewTenantOrders(
 
 **② Partner/Marketplace Pattern — Shared Resources**
 
-```mermaid
-graph LR
-    subgraph "Tenant A (Seller)"
-        CatalogA["Product Catalog"]
-    end
-
-    subgraph "Shared Layer"
-        SP["Sharing Policy<br/>tenant_a shares catalog<br/>with tenant_b"]
-    end
-
-    subgraph "Tenant B (Buyer)"
-        ViewB["View Shared Catalog"]
-    end
-
-    CatalogA --> SP
-    SP --> ViewB
+```d2 title="Cross-Tenant Access Patterns"
+direction: right
+group1: "Tenant A (Seller)" {
+  CatalogA: "Product Catalog"
+}
+group2: "Shared Layer" {
+  SP: "Sharing Policy\ntenant_a shares catalog\nwith tenant_b"
+}
+group3: "Tenant B (Buyer)" {
+  ViewB: "View Shared Catalog"
+}
+group1.CatalogA -> group2.SP
+group2.SP -> group3.ViewB
 ```
 
 ```sql
@@ -673,77 +638,60 @@ API Gateway là **điểm vào duy nhất** (single entry point) cho mọi reque
 
 #### Kiến trúc tổng quan
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        API GATEWAY                                  │
-│                                                                     │
-│ Request ──► ① TLS ──► ② Auth ──► ③ Tenant ──► ④ Rate ──► ⑤ Route│
-│              Termination  Verify     Resolve     Limit     to Svc   │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  ① TLS Termination: Decrypt HTTPS                          │    │
-│  │  ② Authentication:  Verify JWT signature + expiry          │    │
-│  │  ③ Tenant Resolve:  Extract tenant_id from JWT/subdomain   │    │
-│  │  ④ Rate Limiting:   Apply per-tenant rate limits           │    │
-│  │  ⑤ Routing:         Route to correct backend based on      │    │
-│  │                     tenant tier / region / feature flags    │    │
-│  └─────────────────────────────────────────────────────────────┘    │
-│                                                                     │
-│  Headers injected vào backend request:                              │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  X-Tenant-ID: acme                                          │    │
-│  │  X-Tenant-Tier: enterprise                                  │    │
-│  │  X-User-ID: user-uuid-1234                                  │    │
-│  │  X-User-Roles: admin,billing                                │    │
-│  │  X-Request-ID: req-uuid-5678                                │    │
-│  │  X-Forwarded-For: 1.2.3.4                                   │    │
-│  └─────────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────────┘
+```d2 title="Các bước xử lý tại API Gateway"
+direction: down
+n0: "Request"
+n1: "① TLS termination\nGiải mã HTTPS"
+n2: "② Authentication\nJWT signature + expiry"
+n3: "③ Tenant resolve\nJWT / Subdomain"
+n4: "④ Rate limit\nTheo tenant"
+n5: "⑤ Route to service\nTheo tier / region / flags"
+n0 -> n1
+n1 -> n2
+n2 -> n3
+n3 -> n4
+n4 -> n5
+headers: "Backend headers\nX-Tenant-ID: acme\nX-Tenant-Tier: enterprise\nX-User-ID: user-uuid-1234\nX-User-Roles: admin,billing\nX-Request-ID: req-uuid-5678\nX-Forwarded-For: 1.2.3.4"
+n5 -> headers
 ```
 
 #### Tenant-aware Routing Patterns
 
 **① Tier-based Routing — Route theo tenant tier:**
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    API GATEWAY ROUTING                       │
-│                                                              │
-│  Request + tenant_id ──► Lookup tenant tier                  │
-│                                                              │
-│  ┌──────────────────────────────────────────────────┐        │
-│  │ Free tier     ──► shared-cluster (pool)          │        │
-│  │ Pro tier      ──► shared-cluster (priority queue)│        │
-│  │ Enterprise    ──► dedicated-cluster (silo)       │        │
-│  └──────────────────────────────────────────────────┘        │
-│                                                              │
-│  ┌──────────────────────────────────────────────────┐        │
-│  │  Rate Limits per tier:                           │        │
-│  │  Free:       100 req/min,  1K req/day            │        │
-│  │  Pro:        1K req/min,   100K req/day          │        │
-│  │  Enterprise: 10K req/min,  Unlimited             │        │
-│  └──────────────────────────────────────────────────┘        │
-└──────────────────────────────────────────────────────────────┘
+```d2 title="Routing và rate limit theo tier"
+direction: right
+lookup: "Request + tenant_id\nLookup tenant tier"
+free: "Free → shared-cluster (pool)\n100 req/phút · 1000 req/ngày"
+pro: "Pro → shared-cluster\nPriority queue\n1000 req/phút · 100.000 req/ngày"
+ent: "Enterprise → dedicated-cluster\n10.000 req/phút · Không giới hạn/ngày"
+lookup -> free
+lookup -> pro
+lookup -> ent
 ```
 
 **② Region-based Routing — Data residency compliance:**
 
-```mermaid
-graph TD
-    GW[API Gateway - Global]
-
-    GW -->|tenant: acme, region: us| US[US Cluster<br/>us-east-1]
-    GW -->|tenant: euro-corp, region: eu| EU[EU Cluster<br/>eu-west-1]
-    GW -->|tenant: asia-inc, region: ap| AP[APAC Cluster<br/>ap-southeast-1]
-
-    US --> US_DB[(US Database)]
-    EU --> EU_DB[(EU Database)]
-    AP --> AP_DB[(APAC Database)]
+```d2 title="Tenant-aware Routing Patterns"
+direction: down
+GW: "API Gateway - Global"
+US: "US Cluster\nus-east-1"
+EU: "EU Cluster\neu-west-1"
+AP: "APAC Cluster\nap-southeast-1"
+US_DB: "US Database" {shape: cylinder}
+EU_DB: "EU Database" {shape: cylinder}
+AP_DB: "APAC Database" {shape: cylinder}
+GW -> US: "tenant: acme, region: us"
+GW -> EU: "tenant: euro-corp, region: eu"
+GW -> AP: "tenant: asia-inc, region: ap"
+US -> US_DB
+EU -> EU_DB
+AP -> AP_DB
 ```
 
 #### Implementation — AWS API Gateway + Lambda Authorizer
 
-```javascript
+```javascript source="authentication" file="gateway/authorizer.js"
 // Lambda Authorizer — validate JWT + resolve tenant + inject context
 exports.handler = async (event) => {
     try {
@@ -786,7 +734,7 @@ exports.handler = async (event) => {
 
 #### Implementation — Kong Gateway Plugin (Lua)
 
-```lua
+```lua source="authentication" file="gateway/kong-tenant-plugin/handler.lua"
 -- kong-tenant-plugin/handler.lua
 local TenantHandler = {
     PRIORITY = 900, -- Chạy sau auth plugin

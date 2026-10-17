@@ -7,27 +7,24 @@ description: "Automated provisioning, tenant configuration & customization, offb
 
 Tenant lifecycle quản lý **toàn bộ vòng đời** của một tenant — từ lúc đăng ký, provisioning, hoạt động, cho đến offboarding/xóa. Đây là quy trình **tự động hóa cao** để scale được số lượng tenant lớn.
 
+```d2 title="Vòng đời tenant"
+direction: right
+new: "NEW\nSign-up"
+setup: "SETUP\nProvision"
+active: ACTIVE
+suspended: SUSPENDED
+delete: DELETE
+upgrade: Upgrade tier
+new -> setup: Đăng ký
+setup -> active: Tự động provision (mục tiêu khoảng 30 giây)
+active -> suspended: API call / ngay lập tức
+suspended -> active: Reactivate
+suspended -> delete: Sau 30–90 ngày theo policy
+active -> upgrade -> active
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│               TENANT LIFECYCLE                                   │
-│                                                                  │
-│  ① Sign-up    ② Provision   ③ Active   ④ Suspend   ⑤ Delete  │
-│                                                                  │
-│  ┌──────┐    ┌──────┐     ┌──────┐      ┌───────┐    ┌──────┐    │
-│  │ NEW  │───▶│SETUP │────▶│ACTIVE│─────▶│ SUSP. │───▶│DELETE│    │
-│  └──────┘    └──────┘     └──┬───┘      └───┬───┘    └──────┘    │
-│                              │              │                    │
-│                              │   ┌───────┐  │                    │
-│                              └──▶│UPGRADE│──┘                    │
-│                                  │ tier  │  (reactivate)         │
-│                                  └───────┘                       │
-│                                                                  │
-│  Duration:                                                       │
-│  Sign-up → Active: 30 seconds (fully automated)                  │
-│  Active → Suspend: immediate (API call)                          │
-│  Suspend → Delete: 30-90 days (data retention policy)            │
-└──────────────────────────────────────────────────────────────────┘
-```
+
+> [!NOTE]
+> Các nút **Mở ví dụ và các file liên quan** mở Source Explorer để tra cứu code trong bài. Đây là các trích đoạn minh họa, không phải project có thể chạy độc lập; không chứa cấu hình hay secrets production.
 
 ## Automated Provisioning
 
@@ -65,7 +62,7 @@ sequenceDiagram
 
 #### Provisioning Pipeline — Implementation
 
-```java
+```java source="tenant-lifecycle" file="src/lifecycle/TenantProvisioningService.java"
 @Service
 public class TenantProvisioningService {
 
@@ -151,7 +148,7 @@ public class TenantProvisioningService {
 
 #### Database Provisioner — Per-Tier Strategy
 
-```java
+```java source="tenant-lifecycle" file="src/db/DatabaseProvisioner.java"
 @Component
 public class DatabaseProvisioner {
 
@@ -236,36 +233,18 @@ Mỗi tenant có thể **tùy chỉnh hành vi** của hệ thống theo nhu c�
 
 #### Configuration Layers
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│              TENANT CONFIGURATION LAYERS                         │
-│                                                                  │
-│  Layer 1: Platform Defaults (base config, all tenants)           │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │  timezone: UTC, locale: en-US, currency: USD             │    │
-│  │  date_format: ISO-8601, pagination: 20                   │    │
-│  └──────────────────────────────────────────────────────────┘    │
-│                     ▼ Override                                   │
-│  Layer 2: Tier Defaults (per-tier config)                        │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │  Free: max_users=5, features=[basic]                     │    │
-│  │  Pro:  max_users=50, features=[basic, advanced]          │    │
-│  │  Ent:  max_users=unlimited, features=[basic, adv, custom]│    │
-│  └──────────────────────────────────────────────────────────┘    │
-│                     ▼ Override                                   │
-│  Layer 3: Tenant-Specific Config (per-tenant overrides)          │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │  acme: timezone=Asia/Tokyo, locale=ja-JP, currency=JPY   │    │
-│  │  beta: timezone=Europe/London, locale=en-GB, currency=GBP│    │
-│  └──────────────────────────────────────────────────────────┘    │
-│                                                                  │
-│  Resolution: Tenant > Tier > Platform (most specific wins)       │
-└──────────────────────────────────────────────────────────────────┘
+```d2 title="Ưu tiên cấu hình: Tenant > Tier > Platform"
+direction: down
+n0: "① Platform Defaults\ntimezone=UTC, locale=en-US, currency=USD\ndate_format=ISO-8601, pagination=20"
+n1: "② Tier Defaults\nFree: 5 users / basic\nPro: 50 users / basic + advanced\nEnterprise: unlimited / custom"
+n2: "③ Tenant Overrides\nacme: Asia/Tokyo, ja-JP, JPY\nbeta: Europe/London, en-GB, GBP"
+n0 -> n1: "Override"
+n1 -> n2: "Override"
 ```
 
 #### Implementation — Hierarchical Configuration
 
-```java
+```java source="tenant-lifecycle" file="src/config/TenantConfigService.java"
 @Service
 public class TenantConfigService {
 
@@ -342,7 +321,7 @@ public class TenantConfigService {
 
 #### Feature Flags per Tenant
 
-```java
+```java source="tenant-lifecycle" file="src/config/TenantFeatureService.java"
 @Service
 public class TenantFeatureService {
 
@@ -421,24 +400,21 @@ Offboarding phải **an toàn, tuân thủ compliance**, và **không ảnh hư�
 
 #### Offboarding State Machine
 
-```mermaid
-stateDiagram-v2
-    [*] --> Active
-
-    Active --> Suspended: Tenant request /<br/>Non-payment / Policy violation
-    Active --> Deactivating: Tenant request deletion
-
-    Suspended --> Active: Reactivate (payment / appeal)
-    Suspended --> Deactivating: After 30 days no action
-
-    Deactivating --> GracePeriod: Notify tenant (14 days)
-    GracePeriod --> DataExport: Tenant requests export
-    GracePeriod --> SoftDeleted: Grace period expired
-
-    DataExport --> SoftDeleted: Export complete
-    SoftDeleted --> HardDeleted: After retention period (90 days)
-
-    HardDeleted --> [*]
+```d2 title="Offboarding State Machine"
+direction: right
+start: Bắt đầu {shape: circle}
+end: Kết thúc {shape: circle}
+start -> Active
+Active -> Suspended: "Tenant request /\nNon-payment / Policy violation"
+Active -> Deactivating: "Tenant request deletion"
+Suspended -> Active: "Reactivate (payment / appeal)"
+Suspended -> Deactivating: "After 30 days no action"
+Deactivating -> GracePeriod: "Notify tenant (14 days)"
+GracePeriod -> DataExport: "Tenant requests export"
+GracePeriod -> SoftDeleted: "Grace period expired"
+DataExport -> SoftDeleted: "Export complete"
+SoftDeleted -> HardDeleted: "After retention period (90 days)"
+HardDeleted -> end
 ```
 
 #### Data Retention Policy
@@ -470,7 +446,7 @@ stateDiagram-v2
 
 #### Offboarding Pipeline — Implementation
 
-```java
+```java source="tenant-lifecycle" file="src/lifecycle/TenantOffboardingService.java"
 @Service
 public class TenantOffboardingService {
 
@@ -585,7 +561,7 @@ public class TenantOffboardingService {
 
 #### Data Export — Cho tenant download trước khi xóa
 
-```java
+```java source="tenant-lifecycle" file="src/lifecycle/TenantDataExportService.java"
 @Service
 public class TenantDataExportService {
 
@@ -699,7 +675,7 @@ sequenceDiagram
 
 #### Migration Service — Implementation
 
-```java
+```java source="tenant-lifecycle" file="src/lifecycle/TenantMigrationService.java"
 @Service
 public class TenantMigrationService {
 
