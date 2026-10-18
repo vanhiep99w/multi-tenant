@@ -15,7 +15,7 @@
     "test:browser": "node --test scripts/tests/docs-kit.browser.mjs"
   },
   "dependencies": {
-    "@vanhiep99w/docs-kit": "^0.9.0",
+    "@vanhiep99w/docs-kit": "^0.9.5",
     "fumadocs-core": "16.17.5",
     "fumadocs-mdx": "15.4.7",
     "fumadocs-ui": "16.17.5",

@@ -32,10 +32,9 @@ test('static export: D2, source drawer and docs-kit components work in the brows
   page.on('request', request => { if (request.url().includes('/source-examples/')) sourceRequests.push(request.url()); });
 
   await page.goto(`${origin}/04-tenant-identity/`);
-  await page.locator('.d2-interactive').first().getByRole('button', { name: /Explore diagram/ }).waitFor();
+  await page.locator('.d2-interactive .d2-viewer').first().waitFor();
   assert.equal(sourceRequests.length, 0, 'source assets should be lazy');
   const firstDiagram = page.locator('.d2-interactive').first();
-  await firstDiagram.getByRole('button', { name: /Explore diagram/ }).click();
   await firstDiagram.getByRole('button', { name: 'Zoom in', exact: true }).click();
   await firstDiagram.getByRole('button', { name: 'Fit', exact: true }).click();
   assert.ok(await firstDiagram.locator('.d2-viewport svg').count());
@@ -103,7 +102,7 @@ test('static export: D2, source drawer and docs-kit components work in the brows
     assert.ok(href?.startsWith('data:'), 'icons must be embedded, not fetched from a third-party host');
   }
   const largeDiagram = page.locator('.d2-interactive').first();
-  await largeDiagram.getByRole('button', { name: /Explore/ }).click();
+  await largeDiagram.locator('.d2-viewer').waitFor();
   await largeDiagram.locator('.d2-breadcrumb select').selectOption('layers.topology');
   await largeDiagram.getByRole('button', { name: 'Fit', exact: true }).click();
   assert.equal(await largeDiagram.locator('.d2-breadcrumb select').inputValue(), 'layers.topology');
