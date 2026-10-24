@@ -27,35 +27,7 @@ n2.link: "./?source=authentication&file=src/security/TenantAuthorizationService.
 
 #### Authentication Flow — Multi-Tenant
 
-> Playback dưới đây minh họa thứ tự các bước do tác giả chọn; không gửi request thật, không mô phỏng concurrency và tốc độ phát không phải latency. Bạn có thể chạy hoặc xem từng bước.
-
-```d2 title="Authentication và lựa chọn tenant" mode=flow interactive=true
-# @flow
-# scenarios:
-#   - id: main
-#     label: "Kịch bản minh họa"
-#     steps:
-#       - edge: "(user -> app)[0]"
-#         description: "User → Frontend App: Login — email + password"
-#       - edge: "(app -> idp)[0]"
-#         description: "Frontend App → Identity Provider Cognito / Auth0 / Keycloak: POST /oauth/token"
-#       - edge: "(idp -> app)[0]"
-#         description: "Identity Provider Cognito / Auth0 / Keycloak → Frontend App: JWT Token"
-#       - edge: "(app -> api)[0]"
-#         description: "Frontend App → API Gateway: GET /api/orders · Authorization: Bearer JWT"
-#       - edge: "(api -> api)[0]"
-#         description: "API Gateway → API Gateway: Validate signature + expiry"
-#       - edge: "(api -> api)[1]"
-#         description: "API Gateway → API Gateway: Extract tenant_id"
-#       - edge: "(api -> service)[0]"
-#         description: "API Gateway → Backend Service: Forward + X-Tenant-ID: acme"
-#       - edge: "(service -> service)[0]"
-#         description: "Backend Service → Backend Service: Set TenantContext = acme"
-#       - edge: "(service -> api)[0]"
-#         description: "Backend Service → API Gateway: Tenant-scoped response"
-#       - edge: "(api -> app)[0]"
-#         description: "API Gateway → Frontend App: 200 OK"
-# @endflow
+```d2 title="Authentication và lựa chọn tenant"
 shape: sequence_diagram
 user: User
 app: Frontend App
@@ -231,29 +203,7 @@ public class TenantAuthFilter extends OncePerRequestFilter {
 
 Nhiều SaaS (Slack, Notion) cho phép user thuộc **nhiều tenant**. Điều này cần **tenant selector** flow:
 
-```d2 title="Authentication và lựa chọn tenant" mode=flow interactive=true
-# @flow
-# scenarios:
-#   - id: main
-#     label: "Kịch bản minh họa"
-#     steps:
-#       - edge: "(user -> app)[0]"
-#         description: "User → App: Login — email + password"
-#       - edge: "(app -> idp)[0]"
-#         description: "App → Auth Server: Authenticate"
-#       - edge: "(idp -> app)[0]"
-#         description: "Auth Server → App: JWT: sub=user-123, tenants=[acme,beta]"
-#       - edge: "(app -> app)[0]"
-#         description: "App → App: Hiển thị Tenant Selector"
-#       - edge: "(user -> app)[1]"
-#         description: "User → App: Chọn ACME Corp"
-#       - edge: "(app -> idp)[1]"
-#         description: "App → Auth Server: POST /token/switch · target_tenant=acme"
-#       - edge: "(idp -> app)[1]"
-#         description: "Auth Server → App: JWT mới: tenant_id=acme"
-#       - edge: "(app -> api)[0]"
-#         description: "App → API: GET /api/orders · Bearer JWT tenant=acme"
-# @endflow
+```d2 title="Authentication và lựa chọn tenant"
 shape: sequence_diagram
 user: User
 app: App
