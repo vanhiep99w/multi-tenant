@@ -775,7 +775,25 @@ Khi service A gọi service B qua **message queue** (SQS, Kafka, RabbitMQ) hoặ
 
 #### Luồng propagation tổng quan
 
-```d2 title="Truyền tenant context qua service và message queue"
+> Playback dưới đây minh họa thứ tự các bước do tác giả chọn; không gửi request thật, không mô phỏng concurrency và tốc độ phát không phải latency. Bạn có thể chạy hoặc xem từng bước.
+
+```d2 title="Truyền tenant context qua service và message queue" mode=flow interactive=true
+# @flow
+# scenarios:
+#   - id: main
+#     label: "Kịch bản minh họa"
+#     steps:
+#       - edge: "(client -> gw)[0]"
+#         description: "Client → API Gateway: POST /orders · JWT tenant=acme"
+#       - edge: "(gw -> order)[0]"
+#         description: "API Gateway → Order Service: X-Tenant-ID: acme"
+#       - edge: "(order -> queue)[0]"
+#         description: "Order Service → Message Queue: Publish OrderCreated"
+#       - edge: "(queue -> payment)[0]"
+#         description: "Message Queue → Payment Service: Consume Event"
+#       - edge: "(payment -> db)[0]"
+#         description: "Payment Service → Database: SELECT WHERE tenant_id = 'acme'"
+# @endflow
 shape: sequence_diagram
 client: Client
 gw: API Gateway
